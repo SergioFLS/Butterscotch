@@ -760,6 +760,7 @@ static void handleConv(VMContext* ctx, uint32_t instr) {
         case 0x20: result = RValue_makeInt32((int32_t) val.real); break;
         case 0x30: result = RValue_makeInt64((int64_t) val.real); break;
         case 0x40: result = RValue_makeBool(val.real > 0.5); break;
+        case 0x50: result = val; break; // Double -> Variable (passthrough)
         case 0x60: { char* s = RValue_toString(val); result = RValue_makeOwnedString(s); break; }
         case 0xF0: result = RValue_makeInt32((int32_t) val.real); break;
 
@@ -768,6 +769,7 @@ static void handleConv(VMContext* ctx, uint32_t instr) {
         case 0x21: result = RValue_makeInt32((int32_t) val.real); break;
         case 0x31: result = RValue_makeInt64((int64_t) val.real); break;
         case 0x41: result = RValue_makeBool(val.real > 0.5); break;
+        case 0x51: result = val; break; // Float -> Variable (passthrough)
 
         // Int32 (2) -> other
         case 0x02: result = RValue_makeReal((double) val.int32); break;
@@ -782,6 +784,7 @@ static void handleConv(VMContext* ctx, uint32_t instr) {
         case 0x03: result = RValue_makeReal((double) val.int64); break;
         case 0x23: result = RValue_makeInt32((int32_t) val.int64); break;
         case 0x43: result = RValue_makeBool(val.int64 > 0); break;
+        case 0x53: result = val; break; // Int64 -> Variable (passthrough)
 
         // Bool (4) -> other
         case 0x04: result = RValue_makeReal((double) val.int32); break;
@@ -796,6 +799,7 @@ static void handleConv(VMContext* ctx, uint32_t instr) {
         case 0x25: result = RValue_makeInt32(RValue_toInt32(val)); break;
         case 0x35: result = RValue_makeInt64(RValue_toInt64(val)); break;
         case 0x45: result = RValue_makeBool(RValue_toBool(val)); break;
+        case 0x55: result = val; break; // Variable -> Variable (identity)
         case 0x65: { char* s = RValue_toString(val); result = RValue_makeOwnedString(s); break; }
         case 0xF5: result = RValue_makeInt32(RValue_toInt32(val)); break;
 
