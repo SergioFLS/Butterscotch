@@ -19,6 +19,5 @@ Runner* Runner_create(DataWin* dataWin, VMContext* vm) {
 }
 
 void Runner_free(Runner* runner) {
-    free(runner->currentRoom);
     free(runner);
 }
