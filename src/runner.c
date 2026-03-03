@@ -199,11 +199,54 @@ Runner* Runner_create(DataWin* dataWin, VMContext* vm) {
     runner->gameStartFired = false;
     runner->currentRoomIndex = -1;
     runner->currentRoomOrderPosition = -1;
+    runner->nextInstanceId = dataWin->gen8.lastObj + 1;
 
     // Link runner to VM context
     vm->runner = (struct Runner*) runner;
 
     return runner;
+}
+
+Instance* Runner_createInstance(Runner* runner, double x, double y, int32_t objectIndex) {
+    DataWin* dataWin = runner->dataWin;
+    require(objectIndex >= 0 && dataWin->objt.count > (uint32_t) objectIndex);
+
+    GameObject* objDef = &dataWin->objt.objects[objectIndex];
+    uint32_t selfVarCount = runner->vmContext->selfVarCount;
+
+    Instance* inst = Instance_create(runner->nextInstanceId++, objectIndex, x, y, selfVarCount);
+
+    inst->spriteIndex = objDef->spriteId;
+    inst->visible = objDef->visible;
+    inst->solid = objDef->solid;
+    inst->persistent = objDef->persistent;
+    inst->depth = objDef->depth;
+
+    arrput(runner->instances, inst);
+
+    Runner_executeEvent(runner, inst, EVENT_CREATE, 0);
+
+    return inst;
+}
+
+void Runner_destroyInstance(Runner* runner, Instance* inst) {
+    (void) runner;
+    Runner_executeEvent(runner, inst, EVENT_DESTROY, 0);
+    inst->active = false;
+}
+
+void Runner_cleanupDestroyedInstances(Runner* runner) {
+    int32_t count = (int32_t) arrlen(runner->instances);
+    int32_t writeIdx = 0;
+    repeat(count, i) {
+        Instance* inst = runner->instances[i];
+        if (inst != nullptr && inst->active) {
+            runner->instances[writeIdx++] = inst;
+        } else if (inst != nullptr) {
+            Instance_free(inst);
+        }
+    }
+    arrsetlen(runner->instances, writeIdx);
 }
 
 void Runner_initFirstRoom(Runner* runner) {
@@ -281,6 +324,8 @@ void Runner_step(Runner* runner) {
 
         runner->pendingRoom = -1;
     }
+
+    Runner_cleanupDestroyedInstances(runner);
 
     runner->frameCount++;
 }

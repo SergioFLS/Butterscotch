@@ -1041,14 +1041,90 @@ STUB_RETURN_UNDEFINED(game_save)
 STUB_RETURN_UNDEFINED(game_load)
 
 // Instance stubs
-STUB_RETURN_ZERO(instance_exists)
 STUB_RETURN_ZERO(instance_number)
-STUB_RETURN_UNDEFINED(instance_destroy)
+
+static RValue builtinInstanceExists(VMContext* ctx, RValue* args, int32_t argCount) {
+    if (1 > argCount) return RValue_makeBool(false);
+    Runner* runner = (Runner*) ctx->runner;
+    int32_t id = RValue_toInt32(args[0]);
+    bool found = false;
+    int32_t instanceCount = (int32_t) arrlen(runner->instances);
+    if (id >= 0 && runner->dataWin->objt.count > (uint32_t) id) {
+        // Object type index: search for any active instance with that objectIndex
+        repeat(instanceCount, i) {
+            Instance* inst = runner->instances[i];
+            if (inst != nullptr && inst->active && inst->objectIndex == id) {
+                found = true;
+                break;
+            }
+        }
+    } else {
+        // Instance ID: search for a specific instance
+        repeat(instanceCount, i) {
+            Instance* inst = runner->instances[i];
+            if (inst != nullptr && inst->active && inst->instanceId == (uint32_t) id) {
+                found = true;
+                break;
+            }
+        }
+    }
+    return RValue_makeBool(found);
+}
+
+static RValue builtinInstanceDestroy(VMContext* ctx, RValue* args, int32_t argCount) {
+    Runner* runner = (Runner*) ctx->runner;
+    if (1 > argCount) {
+        // No args: destroy the current instance
+        if (ctx->currentInstance != nullptr) {
+            Runner_destroyInstance(runner, (Instance*) ctx->currentInstance);
+        }
+        return RValue_makeUndefined();
+    }
+    // 1 arg: find and destroy matching instances
+    int32_t id = RValue_toInt32(args[0]);
+    int32_t instanceCount = (int32_t) arrlen(runner->instances);
+    if (id >= 0 && runner->dataWin->objt.count > (uint32_t) id) {
+        // Object type index: destroy all active instances with that objectIndex
+        repeat(instanceCount, i) {
+            Instance* inst = runner->instances[i];
+            if (inst != nullptr && inst->active && inst->objectIndex == id) {
+                Runner_destroyInstance(runner, inst);
+            }
+        }
+    } else {
+        // Instance ID: destroy that specific instance
+        repeat(instanceCount, i) {
+            Instance* inst = runner->instances[i];
+            if (inst != nullptr && inst->active && inst->instanceId == (uint32_t) id) {
+                Runner_destroyInstance(runner, inst);
+                break;
+            }
+        }
+    }
+    return RValue_makeUndefined();
+}
 
 static RValue builtinInstanceCreate(VMContext* ctx, RValue* args, int32_t argCount) {
+    if (3 > argCount) return RValue_makeReal(0.0);
+    Runner* runner = (Runner*) ctx->runner;
+    double x = RValue_toReal(args[0]);
+    double y = RValue_toReal(args[1]);
+    int32_t objectIndex = RValue_toInt32(args[2]);
+    if (0 > objectIndex || runner->dataWin->objt.count <= (uint32_t) objectIndex) {
+        fprintf(stderr, "VM: instance_create: objectIndex %d out of range\n", objectIndex);
+        return RValue_makeReal(0.0);
+    }
+    Instance* inst = Runner_createInstance(runner, x, y, objectIndex);
+    return RValue_makeReal((double) inst->instanceId);
+}
+
+static RValue builtinActionKillObject(VMContext* ctx, RValue* args, int32_t argCount) {
     (void) args; (void) argCount;
-    logStubbedFunction(ctx, "instance_create");
-    return RValue_makeReal(0.0);
+    Runner* runner = (Runner*) ctx->runner;
+    if (ctx->currentInstance != nullptr) {
+        Runner_destroyInstance(runner, (Instance*) ctx->currentInstance);
+    }
+    return RValue_makeUndefined();
 }
 
 // Buffer stubs
@@ -1330,10 +1406,11 @@ void VMBuiltins_registerAll(void) {
     registerBuiltin("game_load", builtin_game_load);
 
     // Instance
-    registerBuiltin("instance_exists", builtin_instance_exists);
+    registerBuiltin("instance_exists", builtinInstanceExists);
     registerBuiltin("instance_number", builtin_instance_number);
-    registerBuiltin("instance_destroy", builtin_instance_destroy);
+    registerBuiltin("instance_destroy", builtinInstanceDestroy);
     registerBuiltin("instance_create", builtinInstanceCreate);
+    registerBuiltin("action_kill_object", builtinActionKillObject);
 
     // Buffer
     registerBuiltin("buffer_create", builtin_buffer_create);
