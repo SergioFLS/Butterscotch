@@ -25,3 +25,15 @@ abort(); \
 #define BGR_B(c) (((c) >> 16) & 0xFF)
 #define BGR_G(c) (((c) >>  8) & 0xFF)
 #define BGR_R(c) (((c) >>  0) & 0xFF)
+
+#define shcopyFromTo(src, dst)                        \
+do {                                        \
+(dst) = NULL;                           \
+for (int i = 0; i < shlen(src); i++)    \
+shput((dst), (src)[i].key, (src)[i].value); \
+} while (0)
+
+typedef struct {
+    char* key;
+    bool value;
+} StringBooleanEntry;

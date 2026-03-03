@@ -340,6 +340,7 @@ static void resolveVariableWrite(VMContext* ctx, int16_t instanceType, uint32_t 
         }
     }
 
+    bool shouldTraceGlobal = false;
     RValue* dest;
     switch (instanceType) {
         case INSTANCE_LOCAL:
@@ -348,6 +349,7 @@ static void resolveVariableWrite(VMContext* ctx, int16_t instanceType, uint32_t 
             break;
         case INSTANCE_GLOBAL:
             require(ctx->globalVarCount > (uint32_t) varDef->varID);
+            shouldTraceGlobal = shgeti(ctx->tracedGlobalVars, varDef->name) != -1 || shgeti(ctx->tracedGlobalVars, "*") != -1;
             dest = &ctx->globalVars[varDef->varID];
             break;
         case INSTANCE_SELF:
@@ -367,6 +369,13 @@ static void resolveVariableWrite(VMContext* ctx, int16_t instanceType, uint32_t 
         *dest = RValue_makeOwnedString(strdup(val.string));
     } else {
         *dest = val;
+    }
+
+    // We are getting the NEW value on the dest pointer here (not the old one that was freed), that's why it works :)
+    if (shouldTraceGlobal) {
+        char* rvalueAsString = RValue_toString(*dest);
+        printf("VM: [%s] global.%s = %s\n", ctx->currentCodeName, varDef->name, rvalueAsString);
+        free(rvalueAsString);
     }
 }
 
@@ -1357,6 +1366,7 @@ void VM_free(VMContext* ctx) {
     shfree(ctx->globalVarNameMap);
     shfree(ctx->loggedUnknownFuncs);
     shfree(ctx->loggedStubbedFuncs);
+    shfree(ctx->tracedGlobalVars);
     hmfree(ctx->varRefMap);
     hmfree(ctx->funcRefMap);
 

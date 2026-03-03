@@ -5,6 +5,7 @@
 
 #include "data_win.h"
 #include "rvalue.h"
+#include "utils.h"
 
 // ===[ GML Data Types (4-bit type codes) ]===
 #define GML_TYPE_DOUBLE   0x0
@@ -123,9 +124,10 @@ typedef struct VMContext {
     // varName -> varID hash map for global variables (stb_ds)
     struct { char* key; int32_t value; }* globalVarNameMap;
     // "codeName\tfuncName" -> true, for deduplicating unknown function warnings
-    struct { char* key; bool value; }* loggedUnknownFuncs;
+    StringBooleanEntry* loggedUnknownFuncs;
     // "codeName\tfuncName" -> true, for deduplicating stubbed function warnings
-    struct { char* key; bool value; }* loggedStubbedFuncs;
+    StringBooleanEntry* loggedStubbedFuncs;
+    StringBooleanEntry* tracedGlobalVars;
     // Resolved reference maps: absolute file offset of operand -> resolved value
     // varRefMap value = upper 5 bits (varType) | varIndex in lower 27 bits
     // funcRefMap value = funcIndex
