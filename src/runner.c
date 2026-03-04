@@ -63,11 +63,32 @@ static void executeCode(Runner* runner, Instance* instance, int32_t codeId) {
     // GameMaker does use codeIds less than 0, we'll just pretend we didn't hear them...
     if (0 > codeId) return;
 
-    // Save VM context
     VMContext* vm = runner->vmContext;
+
+    // Save instance context
     RValue* savedSelfVars = vm->selfVars;
     uint32_t savedSelfVarCount = vm->selfVarCount;
     Instance* savedInstance = (Instance*) vm->currentInstance;
+
+    // Save full VM execution state, because VM_executeCode overwrites all of these.
+    // This is necessary for nested execution (e.g., instance_create triggering a Create
+    // event while another event's executeLoop is still on the call stack).
+    uint8_t* savedBytecodeBase = vm->bytecodeBase;
+    uint32_t savedIP = vm->ip;
+    uint32_t savedCodeEnd = vm->codeEnd;
+    const char* savedCodeName = vm->currentCodeName;
+    RValue* savedLocalVars = vm->localVars;
+    uint32_t savedLocalVarCount = vm->localVarCount;
+    ArrayMapEntry* savedLocalArrayMap = vm->localArrayMap;
+    int32_t savedStackTop = vm->stack.top;
+
+    // Save stack values (VM_executeCode resets stack.top to 0, which would let
+    // the nested execution overwrite the caller's stack slot values)
+    RValue* savedStackValues = nullptr;
+    if (savedStackTop > 0) {
+        savedStackValues = malloc((uint32_t) savedStackTop * sizeof(RValue));
+        memcpy(savedStackValues, vm->stack.slots, (uint32_t) savedStackTop * sizeof(RValue));
+    }
 
     // Set instance context
     setVMInstanceContext(vm, instance);
@@ -76,8 +97,24 @@ static void executeCode(Runner* runner, Instance* instance, int32_t codeId) {
     RValue result = VM_executeCode(vm, codeId);
     RValue_free(&result);
 
-    // Restore
+    // Restore instance context
     restoreVMInstanceContext(vm, savedSelfVars, savedSelfVarCount, savedInstance);
+
+    // Restore VM execution state
+    vm->bytecodeBase = savedBytecodeBase;
+    vm->ip = savedIP;
+    vm->codeEnd = savedCodeEnd;
+    vm->currentCodeName = savedCodeName;
+    vm->localVars = savedLocalVars;
+    vm->localVarCount = savedLocalVarCount;
+    vm->localArrayMap = savedLocalArrayMap;
+    vm->stack.top = savedStackTop;
+
+    // Restore stack values
+    if (savedStackTop > 0) {
+        memcpy(vm->stack.slots, savedStackValues, (uint32_t) savedStackTop * sizeof(RValue));
+        free(savedStackValues);
+    }
 }
 
 static const char* getEventName(int32_t eventType, int32_t eventSubtype) {
