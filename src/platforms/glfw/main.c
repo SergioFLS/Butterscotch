@@ -11,6 +11,7 @@
 
 #include "runner_keyboard.h"
 #include "runner.h"
+#include "input_recording.h"
 #include "gl_renderer.h"
 #include "stb_ds.h"
 #include "stb_image_write.h"
@@ -50,6 +51,8 @@ typedef struct {
     int seed;
     bool hasSeed;
     bool debug;
+    const char* recordInputsPath;
+    const char* playbackInputsPath;
 } CommandLineArgs;
 
 static void parseCommandLineArgs(CommandLineArgs* args, int argc, char* argv[]) {
@@ -78,6 +81,8 @@ static void parseCommandLineArgs(CommandLineArgs* args, int argc, char* argv[]) 
         {"seed", required_argument, nullptr, 'Z'},
         {"debug", no_argument, nullptr, 'D'},
         {"disassemble", required_argument, nullptr, 'A'},
+        {"record-inputs", required_argument, nullptr, 'I'},
+        {"playback-inputs", required_argument, nullptr, 'P'},
         {nullptr,               0,                 nullptr,  0 }
     };
 
@@ -198,6 +203,12 @@ static void parseCommandLineArgs(CommandLineArgs* args, int argc, char* argv[]) 
                 args->hasSeed = true;
                 break;
             }
+            case 'I':
+                args->recordInputsPath = optarg;
+                break;
+            case 'P':
+                args->playbackInputsPath = optarg;
+                break;
             default:
                 fprintf(stderr, "Usage: %s [--headless] [--screenshot=PATTERN] [--screenshot-at-frame=N ...] <path to data.win or game.unx>\n", argv[0]);
                 exit(1);
@@ -220,6 +231,7 @@ static void parseCommandLineArgs(CommandLineArgs* args, int argc, char* argv[]) 
         fprintf(stderr, "You can't set the speed multiplier while running in headless mode! Headless mode always run in real time\n");
         exit(1);
     }
+
 }
 
 static void freeCommandLineArgs(CommandLineArgs* args) {
@@ -306,9 +318,13 @@ static int32_t glfwKeyToGml(int glfwKey) {
     }
 }
 
+static InputRecording* globalInputRecording = nullptr;
+
 static void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
     (void) scancode; (void) mods;
     Runner* runner = (Runner*) glfwGetWindowUserPointer(window);
+    // During playback, suppress real keyboard input (window events like close still work)
+    if (InputRecording_isPlaybackActive(globalInputRecording)) return;
     int32_t gmlKey = glfwKeyToGml(key);
     if (0 > gmlKey) return;
     if (action == GLFW_PRESS) RunnerKeyboard_onKeyDown(runner->keyboard, gmlKey);
@@ -401,6 +417,13 @@ int main(int argc, char* argv[]) {
     // Initialize the runner
     Runner* runner = Runner_create(dataWin, vm);
     runner->debugMode = args.debug;
+
+    // Set up input recording/playback (both can be active: playback then continue recording)
+    if (args.playbackInputsPath != nullptr) {
+        globalInputRecording = InputRecording_createPlayer(args.playbackInputsPath, args.recordInputsPath);
+    } else if (args.recordInputsPath != nullptr) {
+        globalInputRecording = InputRecording_createRecorder(args.recordInputsPath);
+    }
     shcopyFromTo(args.varReadsToBeTraced, runner->vmContext->varReadsToBeTraced);
     shcopyFromTo(args.varWritesToBeTraced, runner->vmContext->varWritesToBeTraced);
     shcopyFromTo(args.functionCallsToBeTraced, runner->vmContext->functionCallsToBeTraced);
@@ -463,6 +486,9 @@ int main(int argc, char* argv[]) {
         // Clear last frame's pressed/released state, then poll new input events
         RunnerKeyboard_beginFrame(runner->keyboard);
         glfwPollEvents();
+
+        // Process input recording/playback (must happen after glfwPollEvents, before Runner_step)
+        InputRecording_processFrame(globalInputRecording, runner->keyboard, runner->frameCount);
 
         // Debug key bindings
         if (runner->debugMode) {
@@ -651,6 +677,15 @@ int main(int argc, char* argv[]) {
         } else {
             lastFrameTime = glfwGetTime();
         }
+    }
+
+    // Save input recording if active, then free
+    if (globalInputRecording != nullptr) {
+        if (globalInputRecording->isRecording) {
+            InputRecording_save(globalInputRecording);
+        }
+        InputRecording_free(globalInputRecording);
+        globalInputRecording = nullptr;
     }
 
     // Cleanup
