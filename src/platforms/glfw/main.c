@@ -71,6 +71,7 @@ static void parseCommandLineArgs(CommandLineArgs* args, int argc, char* argv[]) 
         {"trace-alarms", required_argument,         nullptr, 'a'},
         {"trace-instance-lifecycles", required_argument,         nullptr, 'l'},
         {"trace-events", required_argument,         nullptr, 'e'},
+        {"trace-event-inherited", no_argument, nullptr, 'E'},
         {"trace-opcodes", required_argument,       nullptr, 'o'},
         {"trace-stack", required_argument,         nullptr, 'S'},
         {"trace-frames", no_argument, nullptr, 'k'},
@@ -82,7 +83,6 @@ static void parseCommandLineArgs(CommandLineArgs* args, int argc, char* argv[]) 
         {"seed", required_argument, nullptr, 'Z'},
         {"debug", no_argument, nullptr, 'D'},
         {"disassemble", required_argument, nullptr, 'A'},
-        {"trace-event-inherited", no_argument, nullptr, 'E'},
         {"record-inputs", required_argument, nullptr, 'I'},
         {"playback-inputs", required_argument, nullptr, 'P'},
         {nullptr,               0,                 nullptr,  0 }
