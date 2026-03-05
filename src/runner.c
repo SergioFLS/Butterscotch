@@ -1484,6 +1484,41 @@ char* Runner_dumpStateJson(Runner* runner) {
 
     JsonWriter_endArray(&w);
 
+    // Tiles
+    Room* dumpRoom = runner->currentRoom;
+    JsonWriter_key(&w, "tiles");
+    JsonWriter_beginArray(&w);
+    repeat(dumpRoom->tileCount, tileIdx) {
+        RoomTile* tile = &dumpRoom->tiles[tileIdx];
+        const char* bgName = (tile->backgroundDefinition >= 0 && dataWin->bgnd.count > (uint32_t) tile->backgroundDefinition) ? dataWin->bgnd.backgrounds[tile->backgroundDefinition].name : nullptr;
+
+        JsonWriter_beginObject(&w);
+        JsonWriter_propertyInt(&w, "index", tileIdx);
+        JsonWriter_propertyInt(&w, "x", tile->x);
+        JsonWriter_propertyInt(&w, "y", tile->y);
+        JsonWriter_propertyInt(&w, "backgroundIndex", tile->backgroundDefinition);
+        if (bgName != nullptr) {
+            JsonWriter_propertyString(&w, "backgroundName", bgName);
+        } else {
+            JsonWriter_propertyNull(&w, "backgroundName");
+        }
+        JsonWriter_propertyInt(&w, "sourceX", tile->sourceX);
+        JsonWriter_propertyInt(&w, "sourceY", tile->sourceY);
+        JsonWriter_propertyInt(&w, "width", tile->width);
+        JsonWriter_propertyInt(&w, "height", tile->height);
+        JsonWriter_propertyInt(&w, "depth", tile->tileDepth);
+        JsonWriter_propertyInt(&w, "instanceID", tile->instanceID);
+        JsonWriter_propertyDouble(&w, "scaleX", tile->scaleX);
+        JsonWriter_propertyDouble(&w, "scaleY", tile->scaleY);
+        JsonWriter_propertyInt(&w, "color", tile->color);
+
+        ptrdiff_t layerIdx = hmgeti(runner->tileLayerMap, tile->tileDepth);
+        bool visible = (layerIdx >= 0) ? runner->tileLayerMap[layerIdx].value.visible : true;
+        JsonWriter_propertyBool(&w, "visible", visible);
+        JsonWriter_endObject(&w);
+    }
+    JsonWriter_endArray(&w);
+
     // Global variables (non-array)
     JsonWriter_key(&w, "globalVariables");
     JsonWriter_beginObject(&w);
