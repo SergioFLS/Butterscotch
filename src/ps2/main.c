@@ -14,7 +14,7 @@
 #include "runner_keyboard.h"
 #include "vm.h"
 #include "../data_win.h"
-#include "gs_renderer_flat.h"
+#include "gs_renderer.h"
 #include "ps2_utils.h"
 #include "utils.h"
 
@@ -149,7 +149,7 @@ int main(int argc, char* argv[]) {
     // Save VRAM pointer after FONTM upload so the texture cache starts after it
     uint32_t vramBase = gsGlobal->CurrentPointer;
 
-    Renderer* renderer = GsRendererFlat_create(gsGlobal);
+    Renderer* renderer = GsRenderer_create(gsGlobal);
 
     VMContext* vm = VM_create(dataWin);
     Runner* runner = Runner_create(dataWin, vm);

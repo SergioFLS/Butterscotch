@@ -2,6 +2,7 @@
 #include "vm_builtins.h"
 #include "instance.h"
 #include "runner.h"
+#include "binary_utils.h"
 #include "utils.h"
 
 #include <stdio.h>
@@ -89,46 +90,6 @@ static uint32_t extraDataSize(uint8_t type1) {
     }
 }
 
-// Read a little-endian uint32 from a byte pointer
-static uint32_t readUint32(const uint8_t* p) {
-    uint32_t val;
-    memcpy(&val, p, 4);
-    return val;
-}
-
-static void writeUint32(uint8_t* p, uint32_t val) {
-    memcpy(p, &val, 4);
-}
-
-
-// Read a little-endian int32 from a byte pointer
-static int32_t readInt32(const uint8_t* p) {
-    int32_t val;
-    memcpy(&val, p, 4);
-    return val;
-}
-
-// Read a little-endian double from a byte pointer
-static double readFloat64(const uint8_t* p) {
-    double val;
-    memcpy(&val, p, 8);
-    return val;
-}
-
-// Read a little-endian float from a byte pointer
-static float readFloat32(const uint8_t* p) {
-    float val;
-    memcpy(&val, p, 4);
-    return val;
-}
-
-// Read a little-endian int64 from a byte pointer
-static int64_t readInt64(const uint8_t* p) {
-    int64_t val;
-    memcpy(&val, p, 8);
-    return val;
-}
-
 // ===[ Reference Chain Resolution ]===
 
 // Walks reference chains from the bytecode buffer and builds hash maps
@@ -149,12 +110,12 @@ static void patchReferenceOperands(VMContext* ctx) {
         uint32_t addr = v->firstAddress;
         repeat(v->occurrences, occ) {
             uint32_t operandAddr = addr + 4;
-            uint32_t operand = readUint32(&buf[operandAddr - base]);
+            uint32_t operand = BinaryUtils_readUint32(&buf[operandAddr - base]);
             uint32_t delta = operand & 0x07FFFFFF;
             uint32_t upperBits = operand & 0xF8000000;
 
             // Patch in-place: upper bits preserved, lower 27 = varIdx
-            writeUint32(&buf[operandAddr - base], upperBits | (varIdx & 0x07FFFFFF));
+            BinaryUtils_writeUint32(&buf[operandAddr - base], upperBits | (varIdx & 0x07FFFFFF));
 
             if (v->occurrences > occ + 1) {
                 addr += delta;
@@ -170,11 +131,11 @@ static void patchReferenceOperands(VMContext* ctx) {
         uint32_t addr = f->firstAddress;
         repeat(f->occurrences, occ) {
             uint32_t operandAddr = addr + 4;
-            uint32_t operand = readUint32(&buf[operandAddr - base]);
+            uint32_t operand = BinaryUtils_readUint32(&buf[operandAddr - base]);
             uint32_t delta = operand & 0x07FFFFFF;
 
             // Patch in-place: store funcIdx directly
-            writeUint32(&buf[operandAddr - base], funcIdx);
+            BinaryUtils_writeUint32(&buf[operandAddr - base], funcIdx);
 
             if (f->occurrences > occ + 1) {
                 addr += delta;
@@ -185,12 +146,12 @@ static void patchReferenceOperands(VMContext* ctx) {
 
 // Resolve a variable operand: returns upper bits | varIndex (read directly from patched bytecode)
 static uint32_t resolveVarOperand(const uint8_t* extraData) {
-    return readUint32(extraData);
+    return BinaryUtils_readUint32(extraData);
 }
 
 // Resolve a function operand: returns funcIndex (read directly from patched bytecode)
 static uint32_t resolveFuncOperand(const uint8_t* extraData) {
-    return readUint32(extraData);
+    return BinaryUtils_readUint32(extraData);
 }
 
 // ===[ Array Map Helpers ]===
@@ -793,19 +754,19 @@ static void handlePush(VMContext* ctx, uint32_t instr, const uint8_t* extraData)
 
     switch (type1) {
         case GML_TYPE_DOUBLE:
-            stackPush(ctx,RValue_makeReal(readFloat64(extraData)));
+            stackPush(ctx,RValue_makeReal(BinaryUtils_readFloat64(extraData)));
             break;
         case GML_TYPE_FLOAT:
-            stackPush(ctx,RValue_makeReal((double) readFloat32(extraData)));
+            stackPush(ctx,RValue_makeReal((double) BinaryUtils_readFloat32(extraData)));
             break;
         case GML_TYPE_INT32:
-            stackPush(ctx,RValue_makeInt32(readInt32(extraData)));
+            stackPush(ctx,RValue_makeInt32(BinaryUtils_readInt32(extraData)));
             break;
         case GML_TYPE_INT64:
-            stackPush(ctx,RValue_makeInt64(readInt64(extraData)));
+            stackPush(ctx,RValue_makeInt64(BinaryUtils_readInt64(extraData)));
             break;
         case GML_TYPE_BOOL:
-            stackPush(ctx,RValue_makeBool(readInt32(extraData) != 0));
+            stackPush(ctx,RValue_makeBool(BinaryUtils_readInt32(extraData) != 0));
             break;
         case GML_TYPE_VARIABLE: {
             int32_t instanceType = (int32_t) instrInstanceType(instr);
@@ -815,7 +776,7 @@ static void handlePush(VMContext* ctx, uint32_t instr, const uint8_t* extraData)
             break;
         }
         case GML_TYPE_STRING: {
-            int32_t stringIndex = readInt32(extraData);
+            int32_t stringIndex = BinaryUtils_readInt32(extraData);
             require(stringIndex >= 0 && ctx->dataWin->strg.count > (uint32_t) stringIndex);
             stackPush(ctx,RValue_makeString(ctx->dataWin->strg.strings[stringIndex]));
             break;
@@ -1735,7 +1696,7 @@ static void formatInstruction(VMContext* ctx, const uint8_t* bytecodeBase, uint3
 static RValue executeLoop(VMContext* ctx) {
     while (ctx->codeEnd > ctx->ip) {
         uint32_t instrAddr = ctx->ip;
-        uint32_t instr = readUint32(ctx->bytecodeBase + ctx->ip);
+        uint32_t instr = BinaryUtils_readUint32(ctx->bytecodeBase + ctx->ip);
         ctx->ip += 4;
 
         // extraData pointer (may not be used depending on opcode)
@@ -2243,32 +2204,32 @@ static void formatInstruction(VMContext* ctx, const uint8_t* bytecodeBase, uint3
             switch (type1) {
                 case GML_TYPE_DOUBLE:
                     snprintf(opcodeStr, opcodeSize, "Push.d");
-                    snprintf(operandStr, operandSize, "%g", readFloat64(extraData));
+                    snprintf(operandStr, operandSize, "%g", BinaryUtils_readFloat64(extraData));
                     snprintf(commentStr, commentSize, "// pushes: [double]");
                     break;
                 case GML_TYPE_FLOAT:
                     snprintf(opcodeStr, opcodeSize, "Push.f");
-                    snprintf(operandStr, operandSize, "%g", (double) readFloat32(extraData));
+                    snprintf(operandStr, operandSize, "%g", (double) BinaryUtils_readFloat32(extraData));
                     snprintf(commentStr, commentSize, "// pushes: [float]");
                     break;
                 case GML_TYPE_INT32:
                     snprintf(opcodeStr, opcodeSize, "Push.i");
-                    snprintf(operandStr, operandSize, "%d", readInt32(extraData));
+                    snprintf(operandStr, operandSize, "%d", BinaryUtils_readInt32(extraData));
                     snprintf(commentStr, commentSize, "// pushes: [int32]");
                     break;
                 case GML_TYPE_INT64:
                     snprintf(opcodeStr, opcodeSize, "Push.l");
-                    snprintf(operandStr, operandSize, "%lld", (long long) readInt64(extraData));
+                    snprintf(operandStr, operandSize, "%lld", (long long) BinaryUtils_readInt64(extraData));
                     snprintf(commentStr, commentSize, "// pushes: [int64]");
                     break;
                 case GML_TYPE_BOOL:
                     snprintf(opcodeStr, opcodeSize, "Push.b");
-                    snprintf(operandStr, operandSize, "%s", readInt32(extraData) != 0 ? "true" : "false");
+                    snprintf(operandStr, operandSize, "%s", BinaryUtils_readInt32(extraData) != 0 ? "true" : "false");
                     snprintf(commentStr, commentSize, "// pushes: [bool]");
                     break;
                 case GML_TYPE_STRING: {
                     snprintf(opcodeStr, opcodeSize, "Push.s");
-                    int32_t strIdx = readInt32(extraData);
+                    int32_t strIdx = BinaryUtils_readInt32(extraData);
                     if (strIdx >= 0 && dw->strg.count > (uint32_t) strIdx) {
                         const char* str = dw->strg.strings[strIdx];
                         if (strlen(str) > 60) {
@@ -2366,7 +2327,7 @@ static void formatInstruction(VMContext* ctx, const uint8_t* bytecodeBase, uint3
             // Peek at previous instruction to identify the target object
             const char* targetName = nullptr;
             if (instrAddr >= 4) {
-                uint32_t prevInstr = readUint32(bytecodeBase + instrAddr - 4);
+                uint32_t prevInstr = BinaryUtils_readUint32(bytecodeBase + instrAddr - 4);
                 if (instrOpcode(prevInstr) == OP_PUSHI) {
                     int16_t objIdx = (int16_t) (prevInstr & 0xFFFF);
                     targetName = disasmScopeName(ctx, (int32_t) objIdx);
@@ -2466,7 +2427,7 @@ void VM_buildCrossReferences(VMContext* ctx) {
         uint32_t ip = 0;
 
         while (code->length > ip) {
-            uint32_t instr = readUint32(base + ip);
+            uint32_t instr = BinaryUtils_readUint32(base + ip);
             ip += 4;
             const uint8_t* ed = base + ip;
             if (instrHasExtraData(instr)) {
@@ -2547,7 +2508,7 @@ void VM_disassemble(VMContext* ctx, int32_t codeIndex) {
         uint32_t ip = 0;
         while (codeLength > ip) {
             uint32_t instrAddr = ip;
-            uint32_t instr = readUint32(bytecodeBase + ip);
+            uint32_t instr = BinaryUtils_readUint32(bytecodeBase + ip);
             ip += 4;
             if (instrHasExtraData(instr)) {
                 ip += extraDataSize(instrType1(instr));
@@ -2574,7 +2535,7 @@ void VM_disassemble(VMContext* ctx, int32_t codeIndex) {
 
     while (codeLength > ip) {
         uint32_t instrAddr = ip;
-        uint32_t instr = readUint32(bytecodeBase + ip);
+        uint32_t instr = BinaryUtils_readUint32(bytecodeBase + ip);
         ip += 4;
         const uint8_t* extraData = bytecodeBase + ip;
         if (instrHasExtraData(instr)) {
