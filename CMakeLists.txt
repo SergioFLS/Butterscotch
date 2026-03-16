@@ -7,6 +7,14 @@ add_compile_options(-Wall -Wextra)
 
 set(PLATFORM "" CACHE STRING "Platform backend")
 
+# Build metadata
+set(BUTTERSCOTCH_COMMIT_HASH "unknown" CACHE STRING "Git commit hash")
+set(BUTTERSCOTCH_COMMIT_DATE "unknown" CACHE STRING "Git commit date")
+add_compile_definitions(
+    BUTTERSCOTCH_COMMIT_HASH="${BUTTERSCOTCH_COMMIT_HASH}"
+    BUTTERSCOTCH_COMMIT_DATE="${BUTTERSCOTCH_COMMIT_DATE}"
+)
+
 if(PLATFORM STREQUAL "")
     message(FATAL_ERROR "PLATFORM is not set! Use -DPLATFORM=glfw (or another supported platform).")
 endif()

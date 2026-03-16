@@ -13,11 +13,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Get commit info
+        id: commit-info
+        run: |
+          echo "hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "date=$(git log -1 --format=%cd --date=short)" >> $GITHUB_OUTPUT
+
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y cmake libglfw3-dev
 
       - name: Configure
-        run: cmake -B build -DPLATFORM=glfw -DCMAKE_BUILD_TYPE=Debug
+        run: cmake -B build -DPLATFORM=glfw -DCMAKE_BUILD_TYPE=Debug "-DBUTTERSCOTCH_COMMIT_HASH=${{ steps.commit-info.outputs.hash }}" "-DBUTTERSCOTCH_COMMIT_DATE=${{ steps.commit-info.outputs.date }}"
 
       - name: Build
         run: cmake --build build -j$(nproc)
@@ -34,13 +40,21 @@ jobs:
     container:
       image: ps2dev/ps2dev:latest
     steps:
+      - name: Install build tools
+        run: apk add --no-cache cmake make gmp-dev mpfr-dev mpc1-dev git
+
       - uses: actions/checkout@v4
 
-      - name: Install build tools
-        run: apk add --no-cache cmake make gmp-dev mpfr-dev mpc1-dev
+      # Yeah, the safe.directory is needed because "fatal: detected dubious ownership in repository at '/__w/Butterscotch/Butterscotch'"
+      - name: Get commit info
+        id: commit-info
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          echo "hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "date=$(git log -1 --format=%cd --date=format:'%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
 
       - name: Configure
-        run: cmake -B build -DCMAKE_TOOLCHAIN_FILE=$PS2SDK/ps2dev.cmake -DPLATFORM=ps2 -DUSE_FLOAT_REALS=OFF
+        run: cmake -B build -DCMAKE_TOOLCHAIN_FILE=$PS2SDK/ps2dev.cmake -DPLATFORM=ps2 "-DBUTTERSCOTCH_COMMIT_HASH=${{ steps.commit-info.outputs.hash }}" "-DBUTTERSCOTCH_COMMIT_DATE=${{ steps.commit-info.outputs.date }}"
 
       - name: Build
         run: |

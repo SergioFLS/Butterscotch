@@ -82,7 +82,9 @@ static void drawCreditsText(GSGLOBAL* gs, GSFONTM* fontm) {
     float lineHeight = 26.0f * creditsScale;
     float creditsY = 448.0f - 10.0f - lineHeight * 2.0f;
 
-    gsKit_fontm_print_scaled(gs, fontm, 10.0f, creditsY, 1, creditsScale, darkGray, "Butterscotch VERY EARLY ALPHA");
+    char versionText[128];
+    snprintf(versionText, sizeof(versionText), "Butterscotch (%s) [%s]", BUTTERSCOTCH_COMMIT_HASH, BUTTERSCOTCH_COMMIT_DATE);
+    gsKit_fontm_print_scaled(gs, fontm, 10.0f, creditsY, 1, creditsScale, darkGray, versionText);
     gsKit_fontm_print_scaled(gs, fontm, 10.0f, creditsY + lineHeight, 1, creditsScale, darkGray, "Created by MrPowerGamerBR (https://mrpowergamerbr.com/)");
 }
 
