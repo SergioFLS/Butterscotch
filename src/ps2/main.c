@@ -50,6 +50,7 @@ static const PadMapping PAD_MAPPINGS[] = {
     { PAD_TRIANGLE, VK_ESCAPE },
     { PAD_L1, VK_PAGEDOWN },
     { PAD_R1, VK_PAGEUP },
+    { PAD_L2, VK_F10 }
 };
 
 static const int PAD_MAPPING_COUNT = sizeof(PAD_MAPPINGS) / sizeof(PAD_MAPPINGS[0]);
@@ -436,6 +437,14 @@ int main(int argc, char* argv[]) {
                     break;
                 }
             }
+        }
+
+        // Reset global interact state because I HATE when I get stuck while moving through rooms
+        if (RunnerKeyboard_checkPressed(runner->keyboard, VK_F10)) {
+            int32_t interactVarId = shget(runner->vmContext->globalVarNameMap, "interact");
+
+            runner->vmContext->globalVars[interactVarId] = RValue_makeInt32(0);
+            printf("Changed global.interact [%d] value!\n", interactVarId);
         }
 
         // Run one game step
