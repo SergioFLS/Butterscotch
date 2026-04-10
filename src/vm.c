@@ -422,8 +422,17 @@ static RValue resolveVariableRead(VMContext* ctx, int32_t instanceType, uint32_t
     // Check for array access
     if (access.isArray) {
         switch (instanceType) {
-            case INSTANCE_LOCAL:
-                return arrayMapGet(ctx->localArrayMap, varDef->varID, access.arrayIndex);
+            case INSTANCE_LOCAL: {
+                RValue result = arrayMapGet(ctx->localArrayMap, varDef->varID, access.arrayIndex);
+#ifndef DISABLE_VM_TRACING
+                if (shouldTraceVariable(ctx->varReadsToBeTraced, "local", nullptr, varDef->name)) {
+                    char* rvalueAsString = RValue_toStringTyped(result);
+                    fprintf(stderr, "VM: [%s] READ local.%s[%d] -> %s\n", ctx->currentCodeName, varDef->name, access.arrayIndex, rvalueAsString);
+                    free(rvalueAsString);
+                }
+#endif
+                return result;
+            }
             case INSTANCE_GLOBAL: {
                 int32_t resolvedVarID = resolveArrayAlias(ctx->globalVars, ctx->globalVarCount, varDef->varID);
                 RValue result = arrayMapGet(ctx->globalArrayMap, resolvedVarID, access.arrayIndex);
@@ -478,6 +487,13 @@ static RValue resolveVariableRead(VMContext* ctx, int32_t instanceType, uint32_t
             } else {
                 result = ctx->localVars[varDef->varID];
             }
+#ifndef DISABLE_VM_TRACING
+            if (shouldTraceVariable(ctx->varReadsToBeTraced, "local", nullptr, varDef->name)) {
+                char* rvalueAsString = RValue_toStringTyped(result);
+                fprintf(stderr, "VM: [%s] READ local.%s -> %s\n", ctx->currentCodeName, varDef->name, rvalueAsString);
+                free(rvalueAsString);
+            }
+#endif
             break;
         case INSTANCE_GLOBAL:
             require(ctx->globalVarCount > (uint32_t) varDef->varID);
@@ -835,65 +851,19 @@ static void handlePush(VMContext* ctx, uint32_t instr, const uint8_t* extraData)
     }
 }
 
-static void handlePushScoped(VMContext* ctx, MAYBE_UNUSED uint32_t instr, const uint8_t* extraData, ArrayMapEntry* variableMap, uint32_t count, RValue* variables, MAYBE_UNUSED const char* scopeName, MAYBE_UNUSED const char* altScopeName, MAYBE_UNUSED StringBooleanEntry* traceMap) {
-    uint32_t varRef = resolveVarOperand(extraData);
-    Variable* varDef = resolveVarDef(ctx, varRef);
-
-    ArrayAccess access = popArrayAccess(ctx, varRef);
-    RValue val;
-    if (access.isArray) {
-        int32_t resolvedVarID = resolveArrayAlias(variables, count, varDef->varID);
-        val = arrayMapGet(variableMap, resolvedVarID, access.arrayIndex);
-#ifndef DISABLE_VM_TRACING
-        if (shouldTraceVariable(traceMap, scopeName, altScopeName, varDef->name)) {
-            char* rvalueAsString = RValue_toStringTyped(val);
-            fprintf(stderr, "VM: [%s] READ %s.%s[%d] -> %s\n", ctx->currentCodeName, scopeName, varDef->name, access.arrayIndex, rvalueAsString);
-            free(rvalueAsString);
-        }
-#endif
-    } else {
-        require(count > (uint32_t) varDef->varID);
-        if (variables[varDef->varID].type == RVALUE_ARRAY_REF) {
-            val = variables[varDef->varID];
-        } else if (arrayMapHasVariable(variableMap, varDef->varID)) {
-            val = RValue_makeArrayRef(varDef->varID);
-        } else {
-            val = variables[varDef->varID];
-        }
-        val.ownsString = false; // Non-owning copy
-#ifndef DISABLE_VM_TRACING
-        if (shouldTraceVariable(traceMap, scopeName, altScopeName, varDef->name)) {
-            char* rvalueAsString = RValue_toStringTyped(val);
-            fprintf(stderr, "VM: [%s] READ %s.%s -> %s\n", ctx->currentCodeName, scopeName, varDef->name, rvalueAsString);
-            free(rvalueAsString);
-        }
-#endif
-    }
-    stackPush(ctx,val);
+static void handlePushLoc(VMContext* ctx, const uint8_t* extraData) {
+    RValue v = resolveVariableRead(ctx, INSTANCE_LOCAL, resolveVarOperand(extraData));
+    stackPush(ctx, v);
 }
 
-static void handlePushLoc(VMContext* ctx, uint32_t instr, const uint8_t* extraData) {
-    handlePushScoped(ctx, instr, extraData, ctx->localArrayMap, ctx->localVarCount, ctx->localVars, "local", nullptr, nullptr);
-}
-
-static void handlePushGlb(VMContext* ctx, uint32_t instr, const uint8_t* extraData) {
-#ifndef DISABLE_VM_TRACING
-    StringBooleanEntry* traceMap = ctx->varReadsToBeTraced;
-#else
-    StringBooleanEntry* traceMap = nullptr;
-#endif
-    handlePushScoped(ctx, instr, extraData, ctx->globalArrayMap, ctx->globalVarCount, ctx->globalVars, "global", nullptr, traceMap);
+static void handlePushGlb(VMContext* ctx, const uint8_t* extraData) {
+    RValue v = resolveVariableRead(ctx, INSTANCE_GLOBAL, resolveVarOperand(extraData));
+    stackPush(ctx, v);
 }
 
 static void handlePushBltn(VMContext* ctx, uint32_t instr, const uint8_t* extraData) {
-    (void) instr;
-    uint32_t varRef = resolveVarOperand(extraData);
-    Variable* varDef = resolveVarDef(ctx, varRef);
-
-    ArrayAccess access = popArrayAccess(ctx, varRef);
-
-    RValue val = VMBuiltins_getVariable(ctx, varDef->name, access.arrayIndex);
-    stackPush(ctx,val);
+    RValue v = resolveVariableRead(ctx, (int32_t) instrInstanceType(instr), resolveVarOperand(extraData));
+    stackPush(ctx, v);
 }
 
 static void handlePushI(VMContext* ctx, uint32_t instr) {
@@ -1809,10 +1779,10 @@ static RValue executeLoop(VMContext* ctx) {
                 handlePush(ctx, instr, extraData);
                 break;
             case OP_PUSHLOC:
-                handlePushLoc(ctx, instr, extraData);
+                handlePushLoc(ctx, extraData);
                 break;
             case OP_PUSHGLB:
-                handlePushGlb(ctx, instr, extraData);
+                handlePushGlb(ctx, extraData);
                 break;
             case OP_PUSHBLTN:
                 handlePushBltn(ctx, instr, extraData);
