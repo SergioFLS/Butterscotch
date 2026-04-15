@@ -2022,6 +2022,68 @@ VMContext* VM_create(DataWin* dataWin) {
     return ctx;
 }
 
+void VM_reset(VMContext* ctx) {
+    // Reset all global variables to undefined
+    repeat(ctx->globalVarCount, i) {
+        RValue_free(&ctx->globalVars[i]);
+        ctx->globalVars[i].type = RVALUE_UNDEFINED;
+    }
+
+    // Free global array map
+    RValue_freeAllRValuesInMap(ctx->globalArrayMap);
+    hmfree(ctx->globalArrayMap);
+    ctx->globalArrayMap = nullptr;
+
+    // Free global array var tracker
+    hmfree(ctx->globalArrayVarTracker);
+    ctx->globalArrayVarTracker = nullptr;
+
+    // Free local array map (shouldn't have anything mid-reset, but...)
+    RValue_freeAllRValuesInMap(ctx->localArrayMap);
+    hmfree(ctx->localArrayMap);
+    ctx->localArrayMap = nullptr;
+
+    // Reset stack
+    ctx->stack.top = 0;
+
+    // Free any remaining call frames
+    CallFrame* frame = ctx->callStack;
+    while (frame != nullptr) {
+        CallFrame* parent = frame->parent;
+        free(frame);
+        frame = parent;
+    }
+    ctx->callStack = nullptr;
+    ctx->callDepth = 0;
+
+    // Free any remaining env frames
+    EnvFrame* envFrame = ctx->envStack;
+    while (envFrame != nullptr) {
+        EnvFrame* parent = envFrame->parent;
+        arrfree(envFrame->instanceList);
+        free(envFrame);
+        envFrame = parent;
+    }
+    ctx->envStack = nullptr;
+
+    // Reset execution state
+    ctx->currentInstance = nullptr;
+    ctx->otherInstance = nullptr;
+    ctx->selfId = -1;
+    ctx->otherId = -1;
+    ctx->currentEventType = -1;
+    ctx->currentEventSubtype = -1;
+    ctx->currentEventObjectIndex = -1;
+    ctx->scriptArgs = nullptr;
+    ctx->scriptArgCount = 0;
+    ctx->currentCodeName = nullptr;
+    ctx->localVars = nullptr;
+    ctx->localVarCount = 0;
+    ctx->actionRelativeFlag = false;
+
+    fprintf(stderr, "VM: Reset complete (%u global vars cleared)\n", ctx->globalVarCount);
+}
+
 RValue VM_executeCode(VMContext* ctx, int32_t codeIndex) {
     require(codeIndex >= 0 && ctx->dataWin->code.count > (uint32_t) codeIndex);
     CodeEntry* code = &ctx->dataWin->code.entries[codeIndex];
@@ -2694,34 +2756,22 @@ BuiltinFunc VM_findBuiltin(VMContext* ctx, const char* name) {
 void VM_free(VMContext* ctx) {
     if (ctx == nullptr) return;
 
-    // Free global vars
-    if (ctx->globalVars != nullptr) {
-        repeat(ctx->globalVarCount, i) {
-            RValue_free(&ctx->globalVars[i]);
-        }
-        free(ctx->globalVars);
-    }
+    // Reset mutable runtime state
+    VM_reset(ctx);
 
-    // Free array maps
-    RValue_freeAllRValuesInMap(ctx->globalArrayMap);
-    hmfree(ctx->globalArrayMap);
-
-    RValue_freeAllRValuesInMap(ctx->localArrayMap);
-    hmfree(ctx->localArrayMap);
-
-    // Free array var trackers
-    hmfree(ctx->globalArrayVarTracker);
+    // Free global vars array itself
+    free(ctx->globalVars);
 
     // Free hash maps
     shfree(ctx->funcMap);
     shfree(ctx->globalVarNameMap);
 
     // Free dedup key strings before freeing the hashmaps
-    for (ptrdiff_t i = 0; shlen(ctx->loggedUnknownFuncs) > i; i++) {
+    repeat(shlen(ctx->loggedUnknownFuncs), i) {
         free(ctx->loggedUnknownFuncs[i].key);
     }
     shfree(ctx->loggedUnknownFuncs);
-    for (ptrdiff_t i = 0; shlen(ctx->loggedStubbedFuncs) > i; i++) {
+    repeat(shlen(ctx->loggedStubbedFuncs), i) {
         free(ctx->loggedStubbedFuncs[i].key);
     }
     shfree(ctx->loggedStubbedFuncs);
@@ -2745,15 +2795,6 @@ void VM_free(VMContext* ctx) {
             arrfree(ctx->crossRefMap[i].value);
         }
         hmfree(ctx->crossRefMap);
-    }
-
-    // Free any remaining env frames
-    EnvFrame* envFrame = ctx->envStack;
-    while (envFrame != nullptr) {
-        EnvFrame* parent = envFrame->parent;
-        arrfree(envFrame->instanceList);
-        free(envFrame);
-        envFrame = parent;
     }
 
     // Free builtin map

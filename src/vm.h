@@ -217,6 +217,7 @@ typedef struct VMContext {
 
 // ===[ Public API ]===
 VMContext* VM_create(DataWin* dataWin);
+void VM_reset(VMContext* ctx);
 RValue VM_executeCode(VMContext* ctx, int32_t codeIndex);
 RValue VM_callCodeIndex(VMContext* ctx, int32_t codeIndex, RValue* args, int32_t argCount);
 CodeLocals* VM_resolveCodeLocals(VMContext* ctx, const char* codeName);

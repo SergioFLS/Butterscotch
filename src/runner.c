@@ -898,6 +898,9 @@ void Runner_reset(Runner* runner) {
     // This actually sets the default runner values, used for initialization and restarting
     cleanupState(runner);
 
+    // Reset VM state
+    VM_reset(runner->vmContext);
+
     runner->pendingRoom = -1;
     runner->gameStartFired = false;
     runner->currentRoomIndex = -1;
