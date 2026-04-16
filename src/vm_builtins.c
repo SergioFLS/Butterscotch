@@ -1015,6 +1015,16 @@ static RValue builtinCos(MAYBE_UNUSED VMContext* ctx, RValue* args, int32_t argC
     return RValue_makeReal(GMLReal_cos(RValue_toReal(args[0])));
 }
 
+static RValue builtinDsin(MAYBE_UNUSED VMContext* ctx, RValue* args, int32_t argCount) {
+    if (1 > argCount) return RValue_makeReal(0.0);
+    return RValue_makeReal(GMLReal_sin(RValue_toReal(args[0]) * (M_PI / 180.0)));
+}
+
+static RValue builtinDcos(MAYBE_UNUSED VMContext* ctx, RValue* args, int32_t argCount) {
+    if (1 > argCount) return RValue_makeReal(0.0);
+    return RValue_makeReal(GMLReal_cos(RValue_toReal(args[0]) * (M_PI / 180.0)));
+}
+
 static RValue builtinDegtorad(MAYBE_UNUSED VMContext* ctx, RValue* args, int32_t argCount) {
     if (1 > argCount) return RValue_makeReal(0.0);
     return RValue_makeReal(RValue_toReal(args[0]) * (M_PI / 180.0));
@@ -5892,6 +5902,8 @@ void VMBuiltins_registerAll(VMContext* ctx) {
     VM_registerBuiltin(ctx, "sqr", builtinSqr);
     VM_registerBuiltin(ctx, "sin", builtinSin);
     VM_registerBuiltin(ctx, "cos", builtinCos);
+    VM_registerBuiltin(ctx, "dsin", builtinDsin);
+    VM_registerBuiltin(ctx, "dcos", builtinDcos);
     VM_registerBuiltin(ctx, "darctan2", builtinDarctan2);
     VM_registerBuiltin(ctx, "degtorad", builtinDegtorad);
     VM_registerBuiltin(ctx, "radtodeg", builtinRadtodeg);
