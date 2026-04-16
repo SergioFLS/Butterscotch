@@ -2456,7 +2456,7 @@ VMContext* VM_create(DataWin* dataWin) {
     ctx->currentCodeIndex = -1;
 
     // V17+ static initialization tracking
-    if (17 <= dataWin->gen8.bytecodeVersion) {
+    if (dataWin->gen8.bytecodeVersion >= 17) {
         ctx->staticInitialized = safeCalloc(dataWin->code.count, sizeof(bool));
     } else {
         ctx->staticInitialized = nullptr;
