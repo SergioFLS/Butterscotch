@@ -9,6 +9,16 @@
 #include "stb_ds.h"
 #include "utils.h"
 
+// ===[ GML Data Types (4-bit type codes) ]===
+#define GML_TYPE_DOUBLE   0x0
+#define GML_TYPE_FLOAT    0x1
+#define GML_TYPE_INT32    0x2
+#define GML_TYPE_INT64    0x3
+#define GML_TYPE_BOOL     0x4
+#define GML_TYPE_VARIABLE 0x5
+#define GML_TYPE_STRING   0x6
+#define GML_TYPE_INT16    0xF
+
 // ===[ RValue - Tagged Union ]===
 typedef enum {
     RVALUE_REAL = 0,
@@ -42,14 +52,15 @@ typedef struct {
     // We use uint8_t for the type instead of RValueType because a enum value occupies 4 bytes, while uint8_t occupies 1 byte
     uint8_t type;
     bool ownsString;
+    uint8_t gmlStackType; // GML data type from the instruction that pushed this value
 } RValue;
 
 static RValue RValue_makeReal(GMLReal val) {
-    return (RValue){ .real = val, .type = RVALUE_REAL };
+    return (RValue){ .real = val, .type = RVALUE_REAL, .gmlStackType = GML_TYPE_DOUBLE };
 }
 
 static RValue RValue_makeInt32(int32_t val) {
-    return (RValue){ .int32 = val, .type = RVALUE_INT32 };
+    return (RValue){ .int32 = val, .type = RVALUE_INT32, .gmlStackType = GML_TYPE_INT32 };
 }
 
 static RValue RValue_makeInt64(int64_t val) {
@@ -57,43 +68,43 @@ static RValue RValue_makeInt64(int64_t val) {
     // Values that don't fit in int32 get promoted to real instead of clamped, because clamping to INT32_MIN causes arithmetic overflow bugs
     // (example: Undertale's mercymod = -99999999999999 in the Asriel fight)
     if (val > INT32_MAX || INT32_MIN > val) {
-        return (RValue){ .real = (GMLReal) val, .type = RVALUE_REAL };
+        return (RValue){ .real = (GMLReal) val, .type = RVALUE_REAL, .gmlStackType = GML_TYPE_DOUBLE };
     } else {
-        return (RValue){ .int32 = (int32_t) val, .type = RVALUE_INT32 };
+        return (RValue){ .int32 = (int32_t) val, .type = RVALUE_INT32, .gmlStackType = GML_TYPE_INT32 };
     }
 #else
-    return (RValue){ .int64 = val, .type = RVALUE_INT64 };
+    return (RValue){ .int64 = val, .type = RVALUE_INT64, .gmlStackType = GML_TYPE_INT64 };
 #endif
 }
 
 static RValue RValue_makeBool(bool val) {
-    return (RValue){ .int32 = val ? 1 : 0, .type = RVALUE_BOOL };
+    return (RValue){ .int32 = val ? 1 : 0, .type = RVALUE_BOOL, .gmlStackType = GML_TYPE_BOOL };
 }
 
 static RValue RValue_makeString(const char* val) {
-    return (RValue){ .string = val, .type = RVALUE_STRING, .ownsString = false };
+    return (RValue){ .string = val, .type = RVALUE_STRING, .ownsString = false, .gmlStackType = GML_TYPE_STRING };
 }
 
 static RValue RValue_makeOwnedString(char* val) {
-    return (RValue){ .string = val, .type = RVALUE_STRING, .ownsString = true };
+    return (RValue){ .string = val, .type = RVALUE_STRING, .ownsString = true, .gmlStackType = GML_TYPE_STRING };
 }
 
 static RValue RValue_makeUndefined(void) {
-    return (RValue){ .type = RVALUE_UNDEFINED };
+    return (RValue){ .type = RVALUE_UNDEFINED, .gmlStackType = GML_TYPE_VARIABLE };
 }
 
 // Creates an array reference that aliases another variable's array data.
 // The sourceVarID identifies which variable's array map to use for reads/writes.
 static RValue RValue_makeArrayRef(int32_t sourceVarID) {
-    return (RValue){ .int32 = sourceVarID, .type = RVALUE_ARRAY_REF };
+    return (RValue){ .int32 = sourceVarID, .type = RVALUE_ARRAY_REF, .gmlStackType = GML_TYPE_VARIABLE };
 }
 
 static RValue RValue_makeMethod(int32_t codeIndex, int32_t boundInstanceId) {
-    return (RValue){ .method = { .codeIndex = codeIndex, .boundInstanceId = boundInstanceId }, .type = RVALUE_METHOD };
+    return (RValue){ .method = { .codeIndex = codeIndex, .boundInstanceId = boundInstanceId }, .type = RVALUE_METHOD, .gmlStackType = GML_TYPE_VARIABLE };
 }
 
 static RValue RValue_makeGMLArray(int32_t varID, int32_t scope) {
-    return (RValue){ .gmlArray = { .varID = varID, .scope = scope }, .type = RVALUE_GML_ARRAY };
+    return (RValue){ .gmlArray = { .varID = varID, .scope = scope }, .type = RVALUE_GML_ARRAY, .gmlStackType = GML_TYPE_VARIABLE };
 }
 
 // Converts an RValue to a heap-allocated string representation.

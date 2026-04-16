@@ -8,16 +8,6 @@
 #include "rvalue.h"
 #include "utils.h"
 
-// ===[ GML Data Types (4-bit type codes) ]===
-#define GML_TYPE_DOUBLE   0x0
-#define GML_TYPE_FLOAT    0x1
-#define GML_TYPE_INT32    0x2
-#define GML_TYPE_INT64    0x3
-#define GML_TYPE_BOOL     0x4
-#define GML_TYPE_VARIABLE 0x5
-#define GML_TYPE_STRING   0x6
-#define GML_TYPE_INT16    0xF
-
 // ===[ Instance Types (signed 16-bit) ]===
 #define INSTANCE_SELF      (-1)
 #define INSTANCE_OTHER     (-2)

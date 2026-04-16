@@ -29,6 +29,21 @@ static bool shouldTraceStack(VMContext* ctx) {
 }
 #endif
 
+// Returns the native byte size of a GML data type on the runner's stack.
+// This is needed because the Dup instruction encodes byte counts, not slot counts.
+static int gmlTypeNativeSize(uint8_t gmlType) {
+    switch (gmlType) {
+        case GML_TYPE_DOUBLE:   return 8;
+        case GML_TYPE_INT32:    return 4;
+        case GML_TYPE_INT64:    return 8;
+        case GML_TYPE_BOOL:     return 4;
+        case GML_TYPE_VARIABLE: return 16;
+        case GML_TYPE_STRING:   return 4;
+        case GML_TYPE_INT16:    return 4;
+        default:                return 16;
+    }
+}
+
 static void stackPush(VMContext* ctx, RValue val) {
     require(VM_STACK_SIZE > ctx->stack.top);
 #ifndef DISABLE_VM_TRACING
@@ -966,19 +981,19 @@ static void handlePush(VMContext* ctx, uint32_t instr, const uint8_t* extraData)
 
     switch (type1) {
         case GML_TYPE_DOUBLE:
-            stackPush(ctx,RValue_makeReal(BinaryUtils_readFloat64(extraData)));
+            stackPush(ctx, RValue_makeReal(BinaryUtils_readFloat64(extraData)));
             break;
         case GML_TYPE_FLOAT:
-            stackPush(ctx,RValue_makeReal((GMLReal) BinaryUtils_readFloat32(extraData)));
+            stackPush(ctx, RValue_makeReal((GMLReal) BinaryUtils_readFloat32(extraData)));
             break;
         case GML_TYPE_INT32:
-            stackPush(ctx,RValue_makeInt32(BinaryUtils_readInt32(extraData)));
+            stackPush(ctx, RValue_makeInt32(BinaryUtils_readInt32(extraData)));
             break;
         case GML_TYPE_INT64:
-            stackPush(ctx,RValue_makeInt64(BinaryUtils_readInt64(extraData)));
+            stackPush(ctx, RValue_makeInt64(BinaryUtils_readInt64(extraData)));
             break;
         case GML_TYPE_BOOL:
-            stackPush(ctx,RValue_makeBool(BinaryUtils_readInt32(extraData) != 0));
+            stackPush(ctx, RValue_makeBool(BinaryUtils_readInt32(extraData) != 0));
             break;
         case GML_TYPE_VARIABLE: {
             int32_t instanceType = (int32_t) instrInstanceType(instr);
@@ -1011,6 +1026,8 @@ static void handlePush(VMContext* ctx, uint32_t instr, const uint8_t* extraData)
                 }
             } else {
                 RValue val = resolveVariableRead(ctx, instanceType, varRef);
+                // Mark as variable-width (16 bytes on native stack) regardless of the RValue's actual type
+                val.gmlStackType = GML_TYPE_VARIABLE;
                 stackPush(ctx, val);
             }
             break;
@@ -1018,12 +1035,14 @@ static void handlePush(VMContext* ctx, uint32_t instr, const uint8_t* extraData)
         case GML_TYPE_STRING: {
             int32_t stringIndex = BinaryUtils_readInt32(extraData);
             require(stringIndex >= 0 && ctx->dataWin->strg.count > (uint32_t) stringIndex);
-            stackPush(ctx,RValue_makeString(ctx->dataWin->strg.strings[stringIndex]));
+            stackPush(ctx, RValue_makeString(ctx->dataWin->strg.strings[stringIndex]));
             break;
         }
         case GML_TYPE_INT16: {
             int16_t value = (int16_t) (instr & 0xFFFF);
-            stackPush(ctx,RValue_makeInt32((int32_t) value));
+            RValue val = RValue_makeInt32((int32_t) value);
+            val.gmlStackType = GML_TYPE_INT16;
+            stackPush(ctx, val);
             break;
         }
         default:
@@ -1039,7 +1058,9 @@ static void handlePushLoc(VMContext* ctx, const uint8_t* extraData) {
         Variable* varDef = resolveVarDef(ctx, varRef);
         stackPush(ctx, RValue_makeGMLArray(varDef->varID, INSTANCE_LOCAL));
     } else {
-        stackPush(ctx, resolveVariableRead(ctx, INSTANCE_LOCAL, varRef));
+        RValue val = resolveVariableRead(ctx, INSTANCE_LOCAL, varRef);
+        val.gmlStackType = GML_TYPE_VARIABLE;
+        stackPush(ctx, val);
     }
 }
 
@@ -1050,7 +1071,9 @@ static void handlePushGlb(VMContext* ctx, const uint8_t* extraData) {
         Variable* varDef = resolveVarDef(ctx, varRef);
         stackPush(ctx, RValue_makeGMLArray(varDef->varID, INSTANCE_GLOBAL));
     } else {
-        stackPush(ctx, resolveVariableRead(ctx, INSTANCE_GLOBAL, varRef));
+        RValue val = resolveVariableRead(ctx, INSTANCE_GLOBAL, varRef);
+        val.gmlStackType = GML_TYPE_VARIABLE;
+        stackPush(ctx, val);
     }
 }
 
@@ -1061,13 +1084,17 @@ static void handlePushBltn(VMContext* ctx, uint32_t instr, const uint8_t* extraD
         Variable* varDef = resolveVarDef(ctx, varRef);
         stackPush(ctx, RValue_makeGMLArray(varDef->varID, (int32_t) instrInstanceType(instr)));
     } else {
-        stackPush(ctx, resolveVariableRead(ctx, (int32_t) instrInstanceType(instr), varRef));
+        RValue val = resolveVariableRead(ctx, (int32_t) instrInstanceType(instr), varRef);
+        val.gmlStackType = GML_TYPE_VARIABLE;
+        stackPush(ctx, val);
     }
 }
 
 static void handlePushI(VMContext* ctx, uint32_t instr) {
     int16_t value = (int16_t) (instr & 0xFFFF);
-    stackPush(ctx,RValue_makeInt32((int32_t) value));
+    RValue val = RValue_makeInt32((int32_t) value);
+    val.gmlStackType = GML_TYPE_INT16;
+    stackPush(ctx, val);
 }
 
 static void handlePop(VMContext* ctx, uint32_t instr, const uint8_t* extraData) {
@@ -1521,7 +1548,9 @@ static void handleConv(VMContext* ctx, uint32_t instr) {
         RValue_free(&val);
     }
 
-    stackPush(ctx,result);
+    // Set gmlStackType to the destination type so Dup can compute correct byte sizes
+    result.gmlStackType = dstType;
+    stackPush(ctx, result);
 }
 
 static void handleCmp(VMContext* ctx, uint32_t instr) {
@@ -1564,12 +1593,31 @@ static void handleCmp(VMContext* ctx, uint32_t instr) {
 }
 
 static void handleDup(VMContext* ctx, uint32_t instr) {
-    // The Extra field (lower 8 bits) encodes how many additional items beyond 1 to duplicate.
-    // dup.i 0 = duplicate 1 item, dup.i 1 = duplicate 2 items (used for array access: instanceType + arrayIndex), etc.
     uint8_t extra = (uint8_t)(instr & 0xFF);
-    int32_t count = (int32_t) extra + 1;
+    int32_t count;
 
-    require(ctx->stack.top >= count);
+    if (ctx->dataWin->gen8.bytecodeVersion >= 17) {
+        // In bytecode 17+, the Dup instruction encodes a byte count in units of the instruction's type1 size: total bytes = (Extra + 1) * typeSize(type1).
+        // The native runner's stack stores raw bytes (int=4, double=8, variable=16), but our VM uses uniform RValue slots.
+        // We walk backward through the stack, summing each slot's native size (tracked via gmlStackType), to find how many slots correspond to the byte count.
+        uint8_t type1 = instrType1(instr);
+        int32_t totalBytes = ((int32_t) extra + 1) * gmlTypeNativeSize(type1);
+
+        count = 0;
+        int32_t bytesRemaining = totalBytes;
+        while (bytesRemaining > 0) {
+            count++;
+            require(ctx->stack.top >= count);
+            uint8_t slotGmlType = ctx->stack.slots[ctx->stack.top - count].gmlStackType;
+            bytesRemaining -= gmlTypeNativeSize(slotGmlType);
+        }
+
+        require(bytesRemaining == 0); // Byte count must align exactly to slot boundaries
+    } else {
+        // Bytecode 16: Extra directly encodes how many additional items beyond 1 to duplicate (dup.i 0 = duplicate 1 item, dup.i 1 = duplicate 2 items, etc)
+        count = (int32_t) extra + 1;
+        require(ctx->stack.top >= count);
+    }
 
     // Copy 'count' items from the top of the stack (preserving order)
     int32_t startIdx = ctx->stack.top - count;
@@ -1677,7 +1725,8 @@ static void handleCall(VMContext* ctx, uint32_t instr, const uint8_t* extraData)
         }
 #endif
 
-        stackPush(ctx,result);
+        result.gmlStackType = GML_TYPE_VARIABLE;
+        stackPush(ctx, result);
         return;
     }
 
@@ -1702,7 +1751,8 @@ static void handleCall(VMContext* ctx, uint32_t instr, const uint8_t* extraData)
             if (args != stackArgs) free(args);
         }
 
-        stackPush(ctx,result);
+        result.gmlStackType = GML_TYPE_VARIABLE;
+        stackPush(ctx, result);
         return;
     }
 
@@ -1734,7 +1784,7 @@ static void handleCall(VMContext* ctx, uint32_t instr, const uint8_t* extraData)
     }
 #endif
 
-    stackPush(ctx,RValue_makeUndefined());
+    stackPush(ctx, RValue_makeUndefined());
 }
 
 // ===[ With-Statement Helpers (PushEnv/PopEnv) ]===
