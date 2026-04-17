@@ -100,7 +100,7 @@ elseif(PLATFORM STREQUAL "ps2")
         # Compiling on the Docker container
         target_include_directories(butterscotch PRIVATE $ENV{PS2SDK}/ee/include $ENV{PS2SDK}/common/include $ENV{PS2DEV}/ee/include $ENV{GSKIT}/include)
         target_link_directories(butterscotch PRIVATE $ENV{PS2SDK}/ee/lib $ENV{GSKIT}/lib)
-        target_link_libraries(butterscotch gskit dmakit audsrv pad mc patches kernel c m)
+        target_link_libraries(butterscotch gskit dmakit audsrv pad mc kbd patches kernel c m)
 
         # Embed ps2sdk IRX modules (sio2man, padman) as C arrays via bin2c
         # This avoids loading from rom0: which has compatibility issues between fat/slim PS2
@@ -132,6 +132,19 @@ elseif(PLATFORM STREQUAL "ps2")
             DEPENDS ${IRX_DIR}/padman.irx
             COMMENT "Embedding padman.irx"
         )
+        # We need the USB mass storage IRX modules for writing gmon.out when not running from host: and for keyboard support
+        add_custom_command(
+            OUTPUT ${IRX_GEN_DIR}/usbd_irx.c
+            COMMAND $ENV{PS2SDK}/bin/bin2c ${IRX_DIR}/usbd.irx ${IRX_GEN_DIR}/usbd_irx.c usbd_irx
+            DEPENDS ${IRX_DIR}/usbd.irx
+            COMMENT "Embedding usbd.irx"
+        )
+        add_custom_command(
+            OUTPUT ${IRX_GEN_DIR}/ps2kbd_irx.c
+            COMMAND $ENV{PS2SDK}/bin/bin2c ${IRX_DIR}/ps2kbd.irx ${IRX_GEN_DIR}/ps2kbd_irx.c ps2kbd_irx
+            DEPENDS ${IRX_DIR}/ps2kbd.irx
+            COMMENT "Embedding ps2kbd.irx"
+        )
         if(NOT DISABLE_PS2_AUDIO)
             add_custom_command(
                 OUTPUT ${IRX_GEN_DIR}/freesd_irx.c
@@ -147,7 +160,7 @@ elseif(PLATFORM STREQUAL "ps2")
             )
         endif()
 
-        target_sources(butterscotch PRIVATE ${IRX_GEN_DIR}/sio2man_irx.c ${IRX_GEN_DIR}/mcman_irx.c ${IRX_GEN_DIR}/mcserv_irx.c ${IRX_GEN_DIR}/padman_irx.c)
+        target_sources(butterscotch PRIVATE ${IRX_GEN_DIR}/sio2man_irx.c ${IRX_GEN_DIR}/mcman_irx.c ${IRX_GEN_DIR}/mcserv_irx.c ${IRX_GEN_DIR}/padman_irx.c ${IRX_GEN_DIR}/usbd_irx.c ${IRX_GEN_DIR}/ps2kbd_irx.c)
         if(NOT DISABLE_PS2_AUDIO)
             target_sources(butterscotch PRIVATE ${IRX_GEN_DIR}/freesd_irx.c ${IRX_GEN_DIR}/audsrv_irx.c)
         endif()
@@ -160,13 +173,6 @@ elseif(PLATFORM STREQUAL "ps2")
             target_compile_options(butterscotch PRIVATE -pg)
             target_link_options(butterscotch PRIVATE -pg)
 
-            # Embed USB mass storage IRX modules for writing gmon.out when not running from host:
-            add_custom_command(
-                OUTPUT ${IRX_GEN_DIR}/usbd_irx.c
-                COMMAND $ENV{PS2SDK}/bin/bin2c ${IRX_DIR}/usbd.irx ${IRX_GEN_DIR}/usbd_irx.c usbd_irx
-                DEPENDS ${IRX_DIR}/usbd.irx
-                COMMENT "Embedding usbd.irx (profiler)"
-            )
             add_custom_command(
                 OUTPUT ${IRX_GEN_DIR}/bdm_irx.c
                 COMMAND $ENV{PS2SDK}/bin/bin2c ${IRX_DIR}/bdm.irx ${IRX_GEN_DIR}/bdm_irx.c bdm_irx
@@ -186,7 +192,6 @@ elseif(PLATFORM STREQUAL "ps2")
                 COMMENT "Embedding usbmass_bd.irx (profiler)"
             )
             target_sources(butterscotch PRIVATE
-                ${IRX_GEN_DIR}/usbd_irx.c
                 ${IRX_GEN_DIR}/bdm_irx.c
                 ${IRX_GEN_DIR}/bdmfs_fatfs_irx.c
                 ${IRX_GEN_DIR}/usbmass_bd_irx.c

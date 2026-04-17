@@ -9,6 +9,7 @@
 #include <gsFontM.h>
 #include <libpad.h>
 #include <libmc.h>
+#include <libkbd.h>
 #include <timer.h>
 #include <unistd.h>
 #include <sbv_patches.h>
@@ -40,6 +41,10 @@ extern unsigned char mcserv_irx[];
 extern unsigned int size_mcserv_irx;
 extern unsigned char padman_irx[];
 extern unsigned int size_padman_irx;
+extern unsigned char usbd_irx[];
+extern unsigned int size_usbd_irx;
+extern unsigned char ps2kbd_irx[];
+extern unsigned int size_ps2kbd_irx;
 #ifndef DISABLE_PS2_AUDIO
 extern unsigned char freesd_irx[];
 extern unsigned int size_freesd_irx;
@@ -66,6 +71,91 @@ static int padMappingCount = 0;
 
 // Previous frame's button state for detecting press/release edges
 static uint16_t prevButtons = 0xFFFF; // All buttons released (buttons are active-low)
+
+// ===[ USB Keyboard ]===
+
+static bool kbdAvailable = false;
+
+// Shift modifier state (left-or-right).
+static bool kbdShiftHeld = false;
+
+// Map a USB HID usage code (as delivered by ps2kbd.irx in RAW mode) to a GML VK code.
+static int32_t hidUsageToGmlKey(uint8_t hid) {
+    // Letters: HID 0x04..0x1D -> ASCII 'A'..'Z' (GML uses uppercase ASCII)
+    if (hid >= 0x04 && hid <= 0x1D) return (int32_t) ('A' + (hid - 0x04));
+    // Numbers: HID 0x1E..0x26 -> '1'..'9', 0x27 -> '0'
+    if (hid >= 0x1E && hid <= 0x26) return (int32_t) ('1' + (hid - 0x1E));
+    if (hid == 0x27) return (int32_t) '0';
+    // Special keys need mapping
+    switch (hid) {
+        case 0x28: return VK_ENTER;      // Enter
+        case 0x29: return VK_ESCAPE;     // Escape
+        case 0x2A: return VK_BACKSPACE;  // Backspace
+        case 0x2B: return VK_TAB;        // Tab
+        case 0x2C: return VK_SPACE;      // Space
+        case 0x3A: return VK_F1;
+        case 0x3B: return VK_F2;
+        case 0x3C: return VK_F3;
+        case 0x3D: return VK_F4;
+        case 0x3E: return VK_F5;
+        case 0x3F: return VK_F6;
+        case 0x40: return VK_F7;
+        case 0x41: return VK_F8;
+        case 0x42: return VK_F9;
+        case 0x43: return VK_F10;
+        case 0x44: return VK_F11;
+        case 0x45: return VK_F12;
+        case 0x49: return VK_INSERT;
+        case 0x4A: return VK_HOME;
+        case 0x4B: return VK_PAGEUP;
+        case 0x4C: return VK_DELETE;
+        case 0x4D: return VK_END;
+        case 0x4E: return VK_PAGEDOWN;
+        case 0x4F: return VK_RIGHT;
+        case 0x50: return VK_LEFT;
+        case 0x51: return VK_DOWN;
+        case 0x52: return VK_UP;
+        case 0xE0: case 0xE4: return VK_CONTROL;  // Left/Right Ctrl
+        case 0xE1: case 0xE5: return VK_SHIFT;    // Left/Right Shift
+        case 0xE2: case 0xE6: return VK_ALT;      // Left/Right Alt
+        default: return -1;
+    }
+}
+
+// Translate a HID usage code to an ASCII character for RunnerKeyboard_onCharacter.
+// Also handles when the shift key is held.
+static unsigned int hidUsageToAsciiChar(uint8_t hid, bool shift) {
+    // Letters A-Z: HID 0x04..0x1D
+    if (hid >= 0x04 && hid <= 0x1D) {
+        char base = (char) ('a' + (hid - 0x04));
+        return (unsigned int) (shift ? (base - 32) : base);
+    }
+
+    // Digits / top-row symbols: 0x1E..0x26 -> 1..9, 0x27 -> 0
+    static const char digitsUnshifted[10] = {'1','2','3','4','5','6','7','8','9','0'};
+    static const char digitsShifted[10]   = {'!','@','#','$','%','^','&','*','(',')'};
+    if (hid >= 0x1E && hid <= 0x26) return (unsigned int) (shift ? digitsShifted[hid - 0x1E] : digitsUnshifted[hid - 0x1E]);
+    if (hid == 0x27) return (unsigned int) (shift ? digitsShifted[9] : digitsUnshifted[9]);
+
+    switch (hid) {
+        case 0x28: return (unsigned int) '\r';  // Enter
+        case 0x2A: return (unsigned int) '\b';  // Backspace
+        case 0x2B: return (unsigned int) '\t';  // Tab
+        case 0x2C: return (unsigned int) ' ';   // Space
+        case 0x2D: return (unsigned int) (shift ? '_' : '-');
+        case 0x2E: return (unsigned int) (shift ? '+' : '=');
+        case 0x2F: return (unsigned int) (shift ? '{' : '[');
+        case 0x30: return (unsigned int) (shift ? '}' : ']');
+        case 0x31: return (unsigned int) (shift ? '|' : '\\');
+        case 0x33: return (unsigned int) (shift ? ':' : ';');
+        case 0x34: return (unsigned int) (shift ? '"' : '\'');
+        case 0x35: return (unsigned int) (shift ? '~' : '`');
+        case 0x36: return (unsigned int) (shift ? '<' : ',');
+        case 0x37: return (unsigned int) (shift ? '>' : '.');
+        case 0x38: return (unsigned int) (shift ? '?' : '/');
+        default: return 0;
+    }
+}
 
 // ===[ Loading Screen ]===
 
@@ -318,6 +408,24 @@ int main(int argc, char* argv[]) {
     padInit(0);
     padPortOpen(0, 0, padBuf);
 
+    // ===[ Load USB Keyboard IOP Modules ]===
+    int usbdRet = SifExecModuleBuffer(usbd_irx, size_usbd_irx, 0, nullptr, nullptr);
+    if (0 > usbdRet) {
+        printf("Warning: failed to load usbd: %d (keyboard disabled)\n", usbdRet);
+    } else {
+        int kbdRet = SifExecModuleBuffer(ps2kbd_irx, size_ps2kbd_irx, 0, nullptr, nullptr);
+        if (0 > kbdRet) {
+            printf("Warning: failed to load ps2kbd: %d (keyboard disabled)\n", kbdRet);
+        } else if (PS2KbdInit() == 0) {
+            printf("Warning: PS2KbdInit failed (keyboard disabled)\n");
+        } else {
+            PS2KbdSetReadmode(PS2KBD_READMODE_RAW);
+            PS2KbdSetBlockingMode(PS2KBD_NONBLOCKING);
+            kbdAvailable = true;
+            printf("USB keyboard initialized\n");
+        }
+    }
+
 #ifndef DISABLE_PS2_AUDIO
     // ===[ Load Audio IOP Modules ]===
     ret = SifExecModuleBuffer(freesd_irx, size_freesd_irx, 0, nullptr, nullptr);
@@ -538,6 +646,28 @@ int main(int argc, char* argv[]) {
             }
 
             prevButtons = buttons;
+        }
+
+        // ===[ Poll USB Keyboard ]===
+        // Drain all pending RAW events this vsync so press/release edges aren't dropped.
+        if (kbdAvailable) {
+            PS2KbdRawKey rawKey;
+            while (PS2KbdReadRaw(&rawKey) > 0) {
+                int32_t gmlKey = hidUsageToGmlKey(rawKey.key);
+
+                // Track shift modifier locally so we can pick the correct glyph for onCharacter.
+                if (rawKey.key == 0xE1 || rawKey.key == 0xE5) {
+                    kbdShiftHeld = (rawKey.state == PS2KBD_RAWKEY_DOWN);
+                }
+
+                if (rawKey.state == PS2KBD_RAWKEY_DOWN) {
+                    if (gmlKey >= 0) RunnerKeyboard_onKeyDown(runner->keyboard, gmlKey);
+                    unsigned int ch = hidUsageToAsciiChar(rawKey.key, kbdShiftHeld);
+                    if (ch != 0) RunnerKeyboard_onCharacter(runner->keyboard, ch);
+                } else if (rawKey.state == PS2KBD_RAWKEY_UP) {
+                    if (gmlKey >= 0) RunnerKeyboard_onKeyUp(runner->keyboard, gmlKey);
+                }
+            }
         }
 
         // R2 removes speed cap (ignore waiting for vsync)
