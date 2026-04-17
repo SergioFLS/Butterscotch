@@ -4,6 +4,7 @@
 #include "runner.h"
 #include "binary_utils.h"
 #include "utils.h"
+#include "bytecode_versions.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -489,7 +490,7 @@ static Variable* resolveVarDef(VMContext* ctx, uint32_t varRef) {
 // Array-only locals (like `var __slots`) are NOT in CodeLocals but also never do scalar access, their
 // storage lives entirely in localArrayMap keyed by varID.
 static uint32_t resolveLocalSlot(VMContext* ctx, int32_t varID) {
-    if (16 >= ctx->dataWin->gen8.bytecodeVersion || ctx->currentCodeLocalsSlotMap == nullptr) {
+    if (IS_BC16_OR_BELOW(ctx) || ctx->currentCodeLocalsSlotMap == nullptr) {
         return (uint32_t) varID;
     }
     ptrdiff_t idx = hmgeti(ctx->currentCodeLocalsSlotMap, varID);
@@ -1820,7 +1821,7 @@ static void handleDup(VMContext* ctx, uint32_t instr) {
     // Normal dup mode
     int32_t count;
 
-    if (ctx->dataWin->gen8.bytecodeVersion >= 17) {
+    if (IS_BC17_OR_HIGHER(ctx)) {
         // In bytecode 17+, the operand encodes a native element count: total bytes = (operand + 1) * typeSize(type1).
         // The native runner's stack stores raw bytes (int=4, double=8, variable=16), but our VM uses uniform RValue slots.
         // We walk backward through the stack, summing each slot's native size (tracked via gmlStackType), to find how many slots correspond to the byte count.
@@ -2353,7 +2354,7 @@ static RValue executeLoop(VMContext* ctx) {
 
             // Break (extended opcodes in V17+, no-op/debug in V16)
             case OP_BREAK: {
-                if (17 > ctx->dataWin->gen8.bytecodeVersion) break;
+                if (IS_BC16_OR_BELOW(ctx)) break;
                 int16_t breakType = instrInstanceType(instr);
                 switch (breakType) {
                     case BREAK_CHKINDEX: {

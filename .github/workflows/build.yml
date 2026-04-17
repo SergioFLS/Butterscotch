@@ -158,10 +158,23 @@ jobs:
           path: build/butterscotch.exe
 
   build-ps2:
-    name: Build (PS2)
+    name: Build (PS2)${{ matrix.label }}
     runs-on: ubuntu-latest
     container:
       image: ps2dev/ps2dev:latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: ""
+            artifact: butterscotch-ps2
+            extra_flags: ""
+          - label: " [Bytecode Version 16]"
+            artifact: butterscotch-ps2-bc16
+            extra_flags: "-DENABLE_BC16=ON -DENABLE_BC17=OFF"
+          - label: " [Bytecode Version 17]"
+            artifact: butterscotch-ps2-bc17
+            extra_flags: "-DENABLE_BC16=OFF -DENABLE_BC17=ON"
     steps:
       - name: Install build tools
         run: apk add --no-cache cmake make gmp-dev mpfr-dev mpc1-dev git
@@ -177,7 +190,7 @@ jobs:
           echo "date=$(git log -1 --format=%cd --date=format:'%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
 
       - name: Configure
-        run: cmake -B build -DCMAKE_TOOLCHAIN_FILE=$PS2SDK/ps2dev.cmake -DPLATFORM=ps2 -DCMAKE_BUILD_TYPE=Release "-DBUTTERSCOTCH_COMMIT_HASH=${{ steps.commit-info.outputs.hash }}" "-DBUTTERSCOTCH_COMMIT_DATE=${{ steps.commit-info.outputs.date }}"
+        run: cmake -B build -DCMAKE_TOOLCHAIN_FILE=$PS2SDK/ps2dev.cmake -DPLATFORM=ps2 ${{ matrix.extra_flags }} -DCMAKE_BUILD_TYPE=Release "-DBUTTERSCOTCH_COMMIT_HASH=${{ steps.commit-info.outputs.hash }}" "-DBUTTERSCOTCH_COMMIT_DATE=${{ steps.commit-info.outputs.date }}"
 
       - name: Build
         run: |
@@ -212,5 +225,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: butterscotch-ps2
+          name: ${{ matrix.artifact }}
           path: build/butterscotch.elf
