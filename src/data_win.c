@@ -1,6 +1,7 @@
 #include "data_win.h"
 #include "binary_reader.h"
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1594,26 +1595,35 @@ DataWin* DataWin_parse(const char* filePath, DataWinParserOptions options) {
 
     // Pass 1: Count total chunks and find STRG chunk offset.
     // All other chunks reference strings from STRG, so it must be loaded first.
+    // We also check if the CODE chunk exists.
     int totalChunks = 0;
+    bool codeExists = false;
     BinaryReader_seek(&reader, 8); // reset to after FORM header
 
-    if (options.parseStrg) {
-        while ((size_t) fileSize > BinaryReader_getPosition(&reader)) {
-            if (BinaryReader_getPosition(&reader) + 8 > (size_t) fileSize) break;
+    while ((size_t) fileSize > BinaryReader_getPosition(&reader)) {
+        if (BinaryReader_getPosition(&reader) + 8 > (size_t) fileSize) break;
 
-            char chunkName[5] = {0};
-            BinaryReader_readBytes(&reader, chunkName, 4);
-            uint32_t chunkLength = BinaryReader_readUint32(&reader);
-            size_t chunkDataStart = BinaryReader_getPosition(&reader);
+        char chunkName[5] = {0};
+        BinaryReader_readBytes(&reader, chunkName, 4);
+        uint32_t chunkLength = BinaryReader_readUint32(&reader);
+        size_t chunkDataStart = BinaryReader_getPosition(&reader);
 
-            if (memcmp(chunkName, "STRG", 4) == 0) {
-                dw->strgBufferBase = chunkDataStart;
-                dw->strgBuffer = BinaryReader_readBytesAt(&reader, chunkDataStart, chunkLength);
-            }
-
-            BinaryReader_seek(&reader, chunkDataStart + chunkLength);
-            totalChunks++;
+        if (options.parseStrg && memcmp(chunkName, "STRG", 4) == 0) {
+            dw->strgBufferBase = chunkDataStart;
+            dw->strgBuffer = BinaryReader_readBytesAt(&reader, chunkDataStart, chunkLength);
         }
+
+        if ((memcmp(chunkName, "CODE", 4) == 0) && chunkLength > 0) {
+            codeExists = true;
+        }
+        BinaryReader_seek(&reader, chunkDataStart + chunkLength);
+        totalChunks++;
+    }
+
+    if (!codeExists && options.parseCode) {
+        fprintf(stderr, "CODE chunk does not exist or is empty! This usually means you're loading a YYC game.\n");
+        fclose(file);
+        exit(1);
     }
 
     // Pass 2: Parse all chunks
