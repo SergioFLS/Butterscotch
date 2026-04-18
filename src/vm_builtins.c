@@ -247,6 +247,10 @@ int16_t VMBuiltins_resolveBuiltinVarId(const char* name) {
     if (strcmp(name, "keyboard_lastchar") == 0) return BUILTIN_VAR_KEYBOARD_LASTCHAR;
     if (strcmp(name, "keyboard_lastkey") == 0) return BUILTIN_VAR_KEYBOARD_LASTKEY;
 
+    // Mouse
+    if (strcmp(name, "mouse_x") == 0) return BUILTIN_VAR_MOUSE_X;
+    if (strcmp(name, "mouse_y") == 0) return BUILTIN_VAR_MOUSE_Y;
+
     // Surfaces
     if (strcmp(name, "application_surface") == 0) return BUILTIN_VAR_APPLICATION_SURFACE;
 
@@ -589,6 +593,10 @@ RValue VMBuiltins_getVariable(VMContext* ctx, int16_t builtinVarId, const char* 
     if (builtinVarId == BUILTIN_VAR_KEYBOARD_KEY) return RValue_makeReal((GMLReal) runner->keyboard->lastKey);
     if (builtinVarId == BUILTIN_VAR_KEYBOARD_LASTCHAR) return RValue_makeString(runner->keyboard->lastChar);
     if (builtinVarId == BUILTIN_VAR_KEYBOARD_LASTKEY) return RValue_makeReal((GMLReal) runner->keyboard->lastKey);
+
+    // Mouse variables
+    if (builtinVarId == BUILTIN_VAR_MOUSE_X) return RValue_makeReal((GMLReal) runner->mouse->mouseX);
+    if (builtinVarId == BUILTIN_VAR_MOUSE_Y) return RValue_makeReal((GMLReal) runner->mouse->mouseY);
 
     // Surfaces
     if (builtinVarId == BUILTIN_VAR_APPLICATION_SURFACE) return RValue_makeReal(-1.0); // sentinel ID for the application surface
@@ -3110,6 +3118,21 @@ static RValue builtinKeyboardClear(VMContext* ctx, RValue* args, int32_t argCoun
     int32_t key = RValue_toInt32(args[0]);
     RunnerKeyboard_clear(runner->keyboard, key);
     return RValue_makeUndefined();
+}
+
+// Mouse functions
+static RValue builtinMouseCheckButton(VMContext* ctx, RValue* args, int32_t argCount) {
+    if (1 > argCount) return RValue_makeBool(false);
+    Runner* runner = (Runner*) ctx->runner;
+    int32_t button = RValue_toInt32(args[0]);
+    return RValue_makeBool(RunnerMouse_checkButton(runner->mouse, button));
+}
+
+static RValue builtinMouseCheckButtonPressed(VMContext* ctx, RValue* args, int32_t argCount) {
+    if (1 > argCount) return RValue_makeBool(false);
+    Runner* runner = (Runner*) ctx->runner;
+    int32_t button = RValue_toInt32(args[0]);
+    return RValue_makeBool(RunnerMouse_checkButtonPressed(runner->mouse, button));
 }
 
 // Joystick stubs
@@ -6233,6 +6256,10 @@ void VMBuiltins_registerAll(VMContext* ctx) {
     VM_registerBuiltin(ctx, "keyboard_key_press", builtinKeyboardKeyPress);
     VM_registerBuiltin(ctx, "keyboard_key_release", builtinKeyboardKeyRelease);
     VM_registerBuiltin(ctx, "keyboard_clear", builtinKeyboardClear);
+
+    // Mouse
+    VM_registerBuiltin(ctx, "mouse_check_button", builtinMouseCheckButton);
+    VM_registerBuiltin(ctx, "mouse_check_button_pressed", builtinMouseCheckButtonPressed);
 
     // Joystick
     VM_registerBuiltin(ctx, "joystick_exists", builtin_joystick_exists);

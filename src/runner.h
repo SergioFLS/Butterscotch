@@ -8,6 +8,7 @@
 #include "instance.h"
 #include "renderer.h"
 #include "runner_keyboard.h"
+#include "runner_mouse.h"
 #include "vm.h"
 
 // ===[ Event Type Constants ]===
@@ -253,6 +254,7 @@ typedef struct Runner {
     int frameCount;
     uint32_t nextInstanceId;
     RunnerKeyboardState* keyboard;
+    RunnerMouseState* mouse;
     RuntimeBackground backgrounds[8];
     uint32_t backgroundColor;      // runtime-mutable (BGR format)
     bool drawBackgroundColor;

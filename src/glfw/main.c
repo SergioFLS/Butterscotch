@@ -1,5 +1,6 @@
 #include "data_win.h"
 #include "glfw/gl_legacy_renderer.h"
+#include "runner_mouse.h"
 #include "vm.h"
 
 #include <glad/glad.h>
@@ -468,6 +469,35 @@ void saveInputRecording() {
     }
 }
 
+// ===[ MOUSE INPUT ]===
+
+static int32_t glfwMouseButtonToGml(int glfwButton) {
+    switch (glfwButton) {
+        case GLFW_MOUSE_BUTTON_LEFT: return MB_LEFT;
+        case GLFW_MOUSE_BUTTON_RIGHT: return MB_RIGHT;
+        case GLFW_MOUSE_BUTTON_MIDDLE: return MB_MIDDLE;
+        default: return INT32_MIN; // Unknown
+    }
+}
+
+static void cursorPositionCallback(GLFWwindow* window, double xpos, double ypos) {
+    Runner* runner = (Runner*) glfwGetWindowUserPointer(window);
+    int fbWidth, fbHeight;
+    glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
+    runner->mouse->mouseX = (xpos/fbWidth) * (runner->dataWin->gen8.defaultWindowWidth / 2.0);
+    runner->mouse->mouseY = (ypos/fbHeight) * (runner->dataWin->gen8.defaultWindowHeight / 2.0);
+}
+
+static void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
+    (void)mods;
+    Runner* runner = (Runner*) glfwGetWindowUserPointer(window);
+    int32_t gmlButton = glfwMouseButtonToGml(button);
+    if (0 > gmlButton) return;
+    if (action == GLFW_PRESS) RunnerMouse_onButtonDown(runner->mouse, gmlButton);
+    else if (action == GLFW_RELEASE) RunnerMouse_onButtonUp(runner->mouse, gmlButton);
+}
+
+
 #ifndef _WIN32
 typedef struct { int key; struct sigaction value; } PreviousSignalActionEntry;
 static PreviousSignalActionEntry* previousSignalActions = nullptr;
@@ -702,6 +732,10 @@ int main(int argc, char* argv[]) {
     glfwSetKeyCallback(window, keyCallback);
     glfwSetCharCallback(window, characterCallback);
 
+    // Set up mouse input
+    glfwSetCursorPosCallback(window, cursorPositionCallback);
+    glfwSetMouseButtonCallback(window, mouseButtonCallback);
+
 #ifndef _WIN32
     struct sigaction sa = { .sa_handler = onCrashSignal };
     sigemptyset(&sa.sa_mask);
@@ -722,6 +756,7 @@ int main(int argc, char* argv[]) {
     while (!glfwWindowShouldClose(window) && !runner->shouldExit) {
         // Clear last frame's pressed/released state, then poll new input events
         RunnerKeyboard_beginFrame(runner->keyboard);
+        RunnerMouse_beginFrame(runner->mouse);
         glfwPollEvents();
 
         // Process input recording/playback (must happen after glfwPollEvents, before Runner_step)

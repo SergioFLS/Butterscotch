@@ -2,6 +2,7 @@
 #include "data_win.h"
 #include "instance.h"
 #include "renderer.h"
+#include "runner_mouse.h"
 #include "vm.h"
 #include "utils.h"
 #include "json_writer.h"
@@ -1118,6 +1119,7 @@ Runner* Runner_create(DataWin* dataWin, VMContext* vm, Renderer* renderer, FileS
     runner->frameCount = 0;
     runner->osType = OS_WINDOWS;
     runner->keyboard = RunnerKeyboard_create();
+    runner->mouse = RunnerMouse_create();
 
     Runner_reset(runner);
 
@@ -2156,6 +2158,7 @@ void Runner_free(Runner* runner) {
     cleanupState(runner);
 
     RunnerKeyboard_free(runner->keyboard);
+    RunnerMouse_free(runner->mouse);
     Instance_free(runner->globalScopeInstance);
     free(runner);
 }
