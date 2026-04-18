@@ -392,6 +392,13 @@ typedef struct {
     bool hasInstanceType; // true when instanceType was popped from stack
 } ArrayAccess;
 
+static int32_t resolveInstanceStackTop(VMContext* ctx) {
+    RValue realInst = stackPop(ctx);
+    int32_t instanceType = RValue_toInt32(realInst);
+    RValue_free(&realInst);
+    return instanceType;
+}
+
 // Pops array index (and optional stacktop value) from the stack if the varRef
 // indicates an array or stacktop access. Returns { .arrayIndex = -1, .isArray = false }
 // for plain variable access.
@@ -410,9 +417,7 @@ static ArrayAccess popArrayAccess(VMContext* ctx, uint32_t varRef) {
         // BC17: if instanceType is -9 (INSTANCE_STACKTOP), the actual instance is the next stack item.
         // This is used for chained access like `command_actor[i].specialsprite[arg]` where the array variable's owning instance is resolved from a computed value on the stack.
         if (IS_BC17_OR_HIGHER(ctx) && instanceType == INSTANCE_STACKTOP) {
-            RValue realInst = stackPop(ctx);
-            instanceType = RValue_toInt32(realInst);
-            RValue_free(&realInst);
+            instanceType = resolveInstanceStackTop(ctx);
         }
 
         return (ArrayAccess){ .arrayIndex = arrayIndex, .instanceType = instanceType, .isArray = true, .hasInstanceType = true };
@@ -424,9 +429,7 @@ static ArrayAccess popArrayAccess(VMContext* ctx, uint32_t varRef) {
         // BC17: PushI.e -9 (INSTANCE_STACKTOP) is pushed before the Pop instruction.
         // When we pop -9, it means "the real instance type is the next item on the stack".
         if (IS_BC17_OR_HIGHER(ctx) && instanceType == INSTANCE_STACKTOP) {
-            RValue realInst = stackPop(ctx);
-            instanceType = RValue_toInt32(realInst);
-            RValue_free(&realInst);
+            instanceType = resolveInstanceStackTop(ctx);
         }
         return (ArrayAccess){ .arrayIndex = -1, .isArray = false, .hasInstanceType = true, .instanceType = instanceType };
     }
@@ -1040,9 +1043,7 @@ static void handlePush(VMContext* ctx, uint32_t instr, const uint8_t* extraData)
                 RValue_free(&firstIndexVal);
                 RValue_free(&scopeVal);
                 if (IS_BC17_OR_HIGHER(ctx) && scope == INSTANCE_STACKTOP) {
-                    RValue realInst = stackPop(ctx);
-                    scope = RValue_toInt32(realInst);
-                    RValue_free(&realInst);
+                    scope = resolveInstanceStackTop(ctx);
                 }
 
                 // Resolve the slot for this scope.
@@ -1243,9 +1244,7 @@ static void handlePop(VMContext* ctx, uint32_t instr, const uint8_t* extraData) 
 
             // BC17: -9 (INSTANCE_STACKTOP) means "pop again for the real instance ID/object index" (e.g. `su_actor.specialsprite[0] = ...`)
             if (IS_BC17_OR_HIGHER(ctx) && instanceType == INSTANCE_STACKTOP) {
-                RValue realInst = stackPop(ctx);
-                instanceType = RValue_toInt32(realInst);
-                RValue_free(&realInst);
+                instanceType = resolveInstanceStackTop(ctx);
             }
 
             val = stackPop(ctx);
@@ -1263,9 +1262,7 @@ static void handlePop(VMContext* ctx, uint32_t instr, const uint8_t* extraData) 
 
             // BC17: -9 (INSTANCE_STACKTOP) means "pop again for the real instance ID/object index"
             if (IS_BC17_OR_HIGHER(ctx) && instanceType == INSTANCE_STACKTOP) {
-                RValue realInst = stackPop(ctx);
-                instanceType = RValue_toInt32(realInst);
-                RValue_free(&realInst);
+                instanceType = resolveInstanceStackTop(ctx);
             }
         }
     } else if (varType == VARTYPE_STACKTOP && type1 == GML_TYPE_VARIABLE) {
@@ -1276,9 +1273,7 @@ static void handlePop(VMContext* ctx, uint32_t instr, const uint8_t* extraData) 
         RValue_free(&instTypeVal);
         // BC17: -9 (INSTANCE_STACKTOP) means "pop again for the real instance type"
         if (IS_BC17_OR_HIGHER(ctx) && instanceType == INSTANCE_STACKTOP) {
-            RValue realInst = stackPop(ctx);
-            instanceType = RValue_toInt32(realInst);
-            RValue_free(&realInst);
+            instanceType = resolveInstanceStackTop(ctx);
         }
 
         val = stackPop(ctx);
@@ -2072,9 +2067,7 @@ static void handlePushEnv(VMContext* ctx, uint32_t instr, uint32_t instrAddr) {
     RValue_free(&targetVal);
     // BC17: -9 (INSTANCE_STACKTOP) means "pop again for the real target"
     if (IS_BC17_OR_HIGHER(ctx) && target == INSTANCE_STACKTOP) {
-        RValue realTarget = stackPop(ctx);
-        target = RValue_toInt32(realTarget);
-        RValue_free(&realTarget);
+        target = resolveInstanceStackTop(ctx);
     }
 
     // Create env frame, save current context
