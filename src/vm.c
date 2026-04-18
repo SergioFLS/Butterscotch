@@ -2231,6 +2231,129 @@ static const char* opcodeName(uint8_t opcode) {
 // Forward declaration for formatInstruction (defined in disassembler section, used by trace-opcodes)
 static void formatInstruction(VMContext* ctx, const uint8_t* bytecodeBase, uint32_t instrAddr, uint32_t instr, const uint8_t* extraData, char* opcodeStr, size_t opcodeSize, char* operandStr, size_t operandSize, char* commentStr, size_t commentSize);
 
+#if IS_BC17_OR_HIGHER_ENABLED
+// ===[ BREAK sub-opcode handlers (BC17+) ]===
+
+static void handleBreakChkIndex(VMContext* ctx, uint32_t instrAddr) {
+    // Validate top-of-stack array index is in [0, 32000)
+    RValue* top = stackPeek(ctx);
+    int32_t idx = RValue_toInt32(*top);
+    if (0 > idx || 32000 <= idx) {
+        fprintf(stderr, "VM: chkindex out of bounds: %d at offset %u in %s\n", idx, instrAddr, ctx->currentCodeName);
+        abort();
+    }
+}
+
+static void handleBreakPushAF(VMContext* ctx) {
+    // Pop index + array ref, push array[index]. Array ref is a weak RVALUE_ARRAY pointer.
+    int32_t idx = stackPopInt32(ctx);
+    RValue arrayRef = stackPop(ctx);
+    RValue result;
+    if (arrayRef.type == RVALUE_ARRAY && arrayRef.array != nullptr && idx >= 0 && idx < arrayRef.array->length) {
+        result = arrayRef.array->data[idx];
+        result.ownsString = false; // weak view
+    } else {
+        result = (RValue){ .type = RVALUE_UNDEFINED };
+    }
+    stackPush(ctx, result);
+    RValue_free(&arrayRef);
+}
+
+static void handleBreakPopAF(VMContext* ctx) {
+    // Pop index + array ref + value, store value at array[index].
+    // CoW via VM_arrayWriteAt requires a slot pointer, since the stack-held arrayRef is a weak view, the real slot is whatever variable holds this array.
+    // We can't easily recover the slot here, so we write directly into the array (no CoW fork at this level, fork already happened when the top-level variable was first written, or on a PUSHAC materialisation).
+    // Assert the array is uniquely-owned or matches the current scope owner. A mismatch here means a shared/aliased array is about to be mutated in place, which silently breaks CoW semantics. BC17+ default mode (pass by reference) is expected to satisfy this since fork already happened at the top-level write. If this fires, a CoW path upstream failed to fork.
+    int32_t idx = stackPopInt32(ctx);
+    RValue arrayRef = stackPop(ctx);
+    RValue value = stackPop(ctx);
+    if (arrayRef.type == RVALUE_ARRAY && arrayRef.array != nullptr && idx >= 0) {
+        GMLArray* arr = arrayRef.array;
+        requireMessage(arr->refCount == 1 || arr->owner == ctx->currentArrayOwner, "BREAK_POPAF: Writing through shared/aliased array without prior CoW fork");
+        GMLArray_growTo(arr, idx + 1);
+        storeIntoArraySlot(arr->data, idx, value);
+    }
+    RValue_free(&arrayRef);
+    RValue_free(&value);
+}
+
+static void handleBreakPushAC(VMContext* ctx, uint32_t instrAddr) {
+    // Pop index + parent array ref, push sub-array at parent[index]. Materialise a fresh sub-array if the slot isn't already an RVALUE_ARRAY (multi-dim auto-init).
+    int32_t idx = stackPopInt32(ctx);
+    RValue arrayRef = stackPop(ctx);
+    if (arrayRef.type != RVALUE_ARRAY || arrayRef.array == nullptr) {
+        fprintf(stderr, "VM: pushac on non-array (type=%d) at offset %u in %s\n", arrayRef.type, instrAddr, ctx->currentCodeName);
+        abort();
+    }
+    GMLArray* parent = arrayRef.array;
+    GMLArray_growTo(parent, idx + 1);
+    if (parent->data[idx].type != RVALUE_ARRAY || parent->data[idx].array == nullptr) {
+        RValue_free(&parent->data[idx]);
+        GMLArray* sub = GMLArray_create(0);
+        sub->owner = parent->owner;
+        parent->data[idx] = (RValue){ .array = sub, .type = RVALUE_ARRAY, .ownsString = true, RVALUE_INIT_GMLTYPE(GML_TYPE_VARIABLE) };
+    }
+    stackPush(ctx, RValue_makeArrayWeak(parent->data[idx].array));
+    RValue_free(&arrayRef);
+}
+
+static void handleBreakSetOwner(VMContext* ctx) {
+    // CoW scope owner for BC17+.
+    // The bytecode emits this at the top of each script or event, passing a token (usually self-instance ID cast to int) that uniquely identifies the current scope.
+    // Arrays whose .owner doesn't match fork on write.
+    RValue value = stackPop(ctx);
+    int64_t token = RValue_toInt64(value);
+    ctx->currentArrayOwner = (void*) (intptr_t) token;
+    RValue_free(&value);
+}
+
+static void handleBreakIsStaticOk(VMContext* ctx) {
+    // Push bool: has this function's static block already run?
+    bool initialized = ctx->staticInitialized[ctx->currentCodeIndex];
+    stackPush(ctx, RValue_makeBool(initialized));
+}
+
+static void handleBreakSetStatic(VMContext* ctx) {
+    // Mark current function's static as initialized
+    ctx->staticInitialized[ctx->currentCodeIndex] = true;
+}
+
+static void handleBreakSaveARef(VMContext* ctx) {
+    // Native 2.3: SAVEAREF does `g_pSavedArraySetContainer = g_pArraySetContainer`, doesn't touch the stack.
+    // `g_pArraySetContainer` is a runner-global set by PUSHAC when traversing multi-dim parents, used by SET_RValue_Array as the container to write into.
+    // Since our PUSHAC pushes the sub-array directly onto the VM stack instead of stashing it in a container, this is a no-op.
+    //
+    // To track if we are doing everything correct, we'll track the savearefBalance to figure out when a game does something wrong.
+    ctx->savearefBalance++;
+}
+
+static void handleBreakRestoreARef(VMContext* ctx) {
+    // Native 2.3: restores `g_pArraySetContainer` from the saved slot. No-op here (see BREAK_SAVEAREF).
+    // A negative balance means RESTOREAREF was emitted without a matching SAVEAREF, which means that we are doing things wrong or it is a bytecode pattern that we don't understand.
+    requireMessage(ctx->savearefBalance > 0, "BREAK_RESTOREAREF without matching SAVEAREF");
+    ctx->savearefBalance--;
+}
+
+static void handleBreak(VMContext* ctx, uint32_t instr, uint32_t instrAddr) {
+    if (IS_BC16_OR_BELOW(ctx)) return;
+    int16_t breakType = instrInstanceType(instr);
+    switch (breakType) {
+        case BREAK_CHKINDEX:    handleBreakChkIndex(ctx, instrAddr); break;
+        case BREAK_PUSHAF:      handleBreakPushAF(ctx); break;
+        case BREAK_POPAF:       handleBreakPopAF(ctx); break;
+        case BREAK_PUSHAC:      handleBreakPushAC(ctx, instrAddr); break;
+        case BREAK_SETOWNER:    handleBreakSetOwner(ctx); break;
+        case BREAK_ISSTATICOK:  handleBreakIsStaticOk(ctx); break;
+        case BREAK_SETSTATIC:   handleBreakSetStatic(ctx); break;
+        case BREAK_SAVEAREF:    handleBreakSaveARef(ctx); break;
+        case BREAK_RESTOREAREF: handleBreakRestoreARef(ctx); break;
+        default:
+            fprintf(stderr, "VM: Unknown BREAK sub-opcode %d at offset %u in %s\n", breakType, instrAddr, ctx->currentCodeName);
+            abort();
+    }
+}
+#endif
+
 static RValue executeLoop(VMContext* ctx) {
     while (ctx->codeEnd > ctx->ip) {
         uint32_t instrAddr = ctx->ip;
@@ -2360,118 +2483,11 @@ static RValue executeLoop(VMContext* ctx) {
                 break;
 
             // Break (extended opcodes in V17+, no-op/debug in V16)
-            case OP_BREAK: {
+            case OP_BREAK:
 #if IS_BC17_OR_HIGHER_ENABLED
-                if (IS_BC16_OR_BELOW(ctx)) break;
-                int16_t breakType = instrInstanceType(instr);
-                switch (breakType) {
-                    case BREAK_CHKINDEX: {
-                        // Validate top-of-stack array index is in [0, 32000)
-                        RValue* top = stackPeek(ctx);
-                        int32_t idx = RValue_toInt32(*top);
-                        if (0 > idx || 32000 <= idx) {
-                            fprintf(stderr, "VM: chkindex out of bounds: %d at offset %u in %s\n", idx, instrAddr, ctx->currentCodeName);
-                            abort();
-                        }
-                        break;
-                    }
-                    case BREAK_PUSHAF: {
-                        // Pop index + array ref, push array[index]. Array ref is a weak RVALUE_ARRAY pointer.
-                        int32_t idx = stackPopInt32(ctx);
-                        RValue arrayRef = stackPop(ctx);
-                        RValue result;
-                        if (arrayRef.type == RVALUE_ARRAY && arrayRef.array != nullptr && idx >= 0 && idx < arrayRef.array->length) {
-                            result = arrayRef.array->data[idx];
-                            result.ownsString = false; // weak view
-                        } else {
-                            result = (RValue){ .type = RVALUE_UNDEFINED };
-                        }
-                        stackPush(ctx, result);
-                        RValue_free(&arrayRef);
-                        break;
-                    }
-                    case BREAK_POPAF: {
-                        // Pop index + array ref + value, store value at array[index].
-                        // CoW via VM_arrayWriteAt requires a slot pointer, since the stack-held arrayRef is a weak view, the real slot is whatever variable holds this array.
-                        // We can't easily recover the slot here, so we write directly into the array (no CoW fork at this level, fork already happened when the top-level variable was first written, or on a PUSHAC materialisation).
-                        // Assert the array is uniquely-owned or matches the current scope owner. A mismatch here means a shared/aliased array is about to be mutated in place, which silently breaks CoW semantics. BC17+ default mode (pass by reference) is expected to satisfy this since fork already happened at the top-level write. If this fires, a CoW path upstream failed to fork.
-                        int32_t idx = stackPopInt32(ctx);
-                        RValue arrayRef = stackPop(ctx);
-                        RValue value = stackPop(ctx);
-                        if (arrayRef.type == RVALUE_ARRAY && arrayRef.array != nullptr && idx >= 0) {
-                            GMLArray* arr = arrayRef.array;
-                            requireMessage(arr->refCount == 1 || arr->owner == ctx->currentArrayOwner, "BREAK_POPAF: Writing through shared/aliased array without prior CoW fork");
-                            GMLArray_growTo(arr, idx + 1);
-                            storeIntoArraySlot(arr->data, idx, value);
-                        }
-                        RValue_free(&arrayRef);
-                        RValue_free(&value);
-                        break;
-                    }
-                    case BREAK_PUSHAC: {
-                        // Pop index + parent array ref, push sub-array at parent[index]. Materialise a fresh sub-array if the slot isn't already an RVALUE_ARRAY (multi-dim auto-init).
-                        int32_t idx = stackPopInt32(ctx);
-                        RValue arrayRef = stackPop(ctx);
-                        if (arrayRef.type != RVALUE_ARRAY || arrayRef.array == nullptr) {
-                            fprintf(stderr, "VM: pushac on non-array (type=%d) at offset %u in %s\n", arrayRef.type, instrAddr, ctx->currentCodeName);
-                            abort();
-                        }
-                        GMLArray* parent = arrayRef.array;
-                        GMLArray_growTo(parent, idx + 1);
-                        if (parent->data[idx].type != RVALUE_ARRAY || parent->data[idx].array == nullptr) {
-                            RValue_free(&parent->data[idx]);
-                            GMLArray* sub = GMLArray_create(0);
-                            sub->owner = parent->owner;
-                            parent->data[idx] = (RValue){ .array = sub, .type = RVALUE_ARRAY, .ownsString = true, RVALUE_INIT_GMLTYPE(GML_TYPE_VARIABLE) };
-                        }
-                        stackPush(ctx, RValue_makeArrayWeak(parent->data[idx].array));
-                        RValue_free(&arrayRef);
-                        break;
-                    }
-                    case BREAK_SETOWNER: {
-                        // CoW scope owner for BC17+.
-                        // The bytecode emits this at the top of each script or event, passing a token (usually self-instance ID cast to int) that uniquely identifies the current scope.
-                        // Arrays whose .owner doesn't match fork on write.
-                        RValue value = stackPop(ctx);
-                        int64_t token = RValue_toInt64(value);
-                        ctx->currentArrayOwner = (void*) (intptr_t) token;
-                        RValue_free(&value);
-                        break;
-                    }
-                    case BREAK_ISSTATICOK: {
-                        // Push bool: has this function's static block already run?
-                        bool initialized = ctx->staticInitialized[ctx->currentCodeIndex];
-                        stackPush(ctx, RValue_makeBool(initialized));
-                        break;
-                    }
-                    case BREAK_SETSTATIC: {
-                        // Mark current function's static as initialized
-                        ctx->staticInitialized[ctx->currentCodeIndex] = true;
-                        break;
-                    }
-                    case BREAK_SAVEAREF: {
-                        // Native 2.3: SAVEAREF does `g_pSavedArraySetContainer = g_pArraySetContainer`, doesn't touch the stack.
-                        // `g_pArraySetContainer` is a runner-global set by PUSHAC when traversing multi-dim parents, used by SET_RValue_Array as the container to write into.
-                        // Since our PUSHAC pushes the sub-array directly onto the VM stack instead of stashing it in a container, this is a no-op.
-                        //
-                        // To track if we are doing everything correct, we'll track the savearefBalance to figure out when a game does something wrong.
-                        ctx->savearefBalance++;
-                        break;
-                    }
-                    case BREAK_RESTOREAREF: {
-                        // Native 2.3: restores `g_pArraySetContainer` from the saved slot. No-op here (see BREAK_SAVEAREF).
-                        // A negative balance means RESTOREAREF was emitted without a matching SAVEAREF, which means that we are doing things wrong or it is a bytecode pattern that we don't understand.
-                        requireMessage(ctx->savearefBalance > 0, "BREAK_RESTOREAREF without matching SAVEAREF");
-                        ctx->savearefBalance--;
-                        break;
-                    }
-                    default:
-                        fprintf(stderr, "VM: Unknown BREAK sub-opcode %d at offset %u in %s\n", breakType, instrAddr, ctx->currentCodeName);
-                        abort();
-                }
+                handleBreak(ctx, instr, instrAddr);
 #endif
                 break;
-            }
 
             default:
                 fprintf(stderr, "VM: Unknown opcode 0x%02X at offset %u\n", opcode, instrAddr);
