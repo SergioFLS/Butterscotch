@@ -399,6 +399,16 @@ static int32_t resolveInstanceStackTop(VMContext* ctx) {
     return instanceType;
 }
 
+static const char* varTypeToString(uint8_t varType) {
+    switch (varType) {
+        case VARTYPE_ARRAY:    return "ARRAY";
+        case VARTYPE_STACKTOP: return "STACKTOP";
+        case VARTYPE_NORMAL:   return "NORMAL";
+        case VARTYPE_INSTANCE: return "INSTANCE";
+        default:               return "UNKNOWN";
+    }
+}
+
 // Pops array index (and optional stacktop value) from the stack if the varRef
 // indicates an array or stacktop access. Returns { .arrayIndex = -1, .isArray = false }
 // for plain variable access.
@@ -535,8 +545,7 @@ static RValue resolveVariableRead(VMContext* ctx, int32_t instanceType, uint32_t
     if (instanceType >= 0) {
         targetInstance = findInstanceByTarget(ctx, instanceType);
         if (targetInstance == nullptr) {
-            uint8_t varType = (varRef >> 24) & 0xF8;
-            const char* varTypeName = varType == VARTYPE_ARRAY ? "ARRAY" : varType == VARTYPE_STACKTOP ? "STACKTOP" : varType == VARTYPE_NORMAL ? "NORMAL" : varType == VARTYPE_INSTANCE ? "INSTANCE" : "UNKNOWN";
+            const char* varTypeName = varTypeToString((varRef >> 24) & 0xF8);
             if (instanceType < 100000 && (uint32_t) instanceType < ctx->dataWin->objt.count) {
                 GameObject* gameObject = &ctx->dataWin->objt.objects[instanceType];
                 fprintf(stderr, "VM: [%s] READ var '%s' on object index %d (%s) but no instance found (varType=%s, isArray=%s, originalInstanceType=%d, hasInstanceType=%s, varID=%d)\n", ctx->currentCodeName, varDef->name, instanceType, gameObject->name, varTypeName, access.isArray ? "true" : "false", originalInstanceType, access.hasInstanceType ? "true" : "false", varDef->varID);
@@ -635,8 +644,7 @@ static RValue resolveVariableRead(VMContext* ctx, int32_t instanceType, uint32_t
         default: {
             Instance* inst = targetInstance;
             if (inst == nullptr) {
-                uint8_t varType = (varRef >> 24) & 0xF8;
-                const char* varTypeName = varType == VARTYPE_ARRAY ? "ARRAY" : varType == VARTYPE_STACKTOP ? "STACKTOP" : varType == VARTYPE_NORMAL ? "NORMAL" : varType == VARTYPE_INSTANCE ? "INSTANCE" : "UNKNOWN";
+                const char* varTypeName = varTypeToString((varRef >> 24) & 0xF8);
                 fprintf(stderr, "VM: [%s] Read on self var '%s' but no current instance (instanceType=%d, varType=%s, isArray=%s, originalInstanceType=%d, hasInstanceType=%s, varID=%d)\n", ctx->currentCodeName, varDef->name, instanceType, varTypeName, access.isArray ? "true" : "false", originalInstanceType, access.hasInstanceType ? "true" : "false", varDef->varID);
                 return RValue_makeReal(0.0);
             }
@@ -766,8 +774,7 @@ static void resolveVariableWrite(VMContext* ctx, int32_t instanceType, uint32_t 
     if (instanceType >= 0) {
         targetInstance = findInstanceByTarget(ctx, instanceType);
         if (targetInstance == nullptr) {
-            uint8_t varType = (varRef >> 24) & 0xF8;
-            const char* varTypeName = varType == VARTYPE_ARRAY ? "ARRAY" : varType == VARTYPE_STACKTOP ? "STACKTOP" : varType == VARTYPE_NORMAL ? "NORMAL" : varType == VARTYPE_INSTANCE ? "INSTANCE" : "UNKNOWN";
+            const char* varTypeName = varTypeToString((varRef >> 24) & 0xF8);
             char* valAsString = RValue_toString(val);
             fprintf(stderr, "VM: [%s] WRITE var '%s' on instance %d but no instance found (varType=%s, isArray=%s, originalInstanceType=%d, hasInstanceType=%s, varID=%d, value=%s)\n", ctx->currentCodeName, varDef->name, instanceType, varTypeName, access.isArray ? "true" : "false", originalInstanceType, access.hasInstanceType ? "true" : "false", varDef->varID, valAsString);
             free(valAsString);
@@ -860,8 +867,7 @@ static void resolveVariableWrite(VMContext* ctx, int32_t instanceType, uint32_t 
         default: {
             Instance* inst = targetInstance;
             if (inst == nullptr) {
-                uint8_t varType = (varRef >> 24) & 0xF8;
-                const char* varTypeName = varType == VARTYPE_ARRAY ? "ARRAY" : varType == VARTYPE_STACKTOP ? "STACKTOP" : varType == VARTYPE_NORMAL ? "NORMAL" : varType == VARTYPE_INSTANCE ? "INSTANCE" : "UNKNOWN";
+                const char* varTypeName = varTypeToString((varRef >> 24) & 0xF8);
                 char* valAsString = RValue_toString(val);
                 fprintf(stderr, "VM: [%s] Write on self var '%s' but no current instance (instanceType=%d, varType=%s, isArray=%s, originalInstanceType=%d, hasInstanceType=%s, varID=%d, value=%s)\n", ctx->currentCodeName, varDef->name, instanceType, varTypeName, access.isArray ? "true" : "false", originalInstanceType, access.hasInstanceType ? "true" : "false", varDef->varID, valAsString);
                 free(valAsString);
@@ -1352,7 +1358,7 @@ static void handlePop(VMContext* ctx, uint32_t instr, const uint8_t* extraData) 
                     if (instanceType >= 0) {
                         inst = findInstanceByTarget(ctx, instanceType);
                         if (inst == nullptr) {
-                            const char* varTypeName = varType == VARTYPE_ARRAY ? "ARRAY" : varType == VARTYPE_STACKTOP ? "STACKTOP" : varType == VARTYPE_NORMAL ? "NORMAL" : varType == VARTYPE_INSTANCE ? "INSTANCE" : "UNKNOWN";
+                            const char* varTypeName = varTypeToString(varType);
                             char* valAsString = RValue_toString(val);
                             if (instanceType < 100000 && (uint32_t) instanceType < ctx->dataWin->objt.count) {
                                 fprintf(stderr, "VM: [%s] WRITE array var '%s[%d]' on object index %d (%s) but no instance found (varType=%s, originalInstanceType=%d, varID=%d, value=%s)\n", ctx->currentCodeName, varDef->name, arrayIndex, instanceType, ctx->dataWin->objt.objects[instanceType].name, varTypeName, originalInstanceType, varDef->varID, valAsString);
