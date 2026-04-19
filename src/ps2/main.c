@@ -58,8 +58,8 @@ extern unsigned int size_audsrv_irx;
 // how much memory the console really has, we will use this value instead
 static int MAX_MEMORY_BYTES = 33554432;
 
-// 256-byte aligned buffer for libpad
-static char padBuf[256] __attribute__((aligned(64)));
+// 256-byte aligned buffers for libpad (one per port)
+static char padBuf[2][256] __attribute__((aligned(64)));
 
 // Controller button to GML key mapping
 typedef struct {
@@ -67,11 +67,82 @@ typedef struct {
     int32_t gmlKey;
 } PadMapping;
 
-static PadMapping* padMappings = nullptr;
-static int padMappingCount = 0;
+static PadMapping* pad1Mappings = nullptr;
+static int pad1MappingCount = 0;
+static PadMapping* pad2Mappings = nullptr;
+static int pad2MappingCount = 0;
 
-// Previous frame's button state for detecting press/release edges
-static uint16_t prevButtons = 0xFFFF; // All buttons released (buttons are active-low)
+// Previous frame's button state per pad (active-low; 0xFFFF = all released)
+static uint16_t prevButtons[2] = {0xFFFF, 0xFFFF};
+
+// Whether each port was successfully opened (padPortOpen succeeded)
+static bool padOpened[2] = {false, false};
+
+// Whether each pad was STABLE last frame (for disconnect/reconnect edge detection)
+static bool padWasStable[2] = {false, false};
+
+static void parsePadMappings(JsonValue* configRoot, const char* key, PadMapping** outMappings, int* outCount, const char* logLabel) {
+    JsonValue* mappingsObj = JsonReader_getObject(configRoot, key);
+    if (mappingsObj == nullptr || !JsonReader_isObject(mappingsObj)) return;
+    int count = JsonReader_objectLength(mappingsObj);
+    PadMapping* mappings = safeMalloc(sizeof(PadMapping) * count);
+    repeat(count, i) {
+        const char* padButtonStr = JsonReader_getObjectKey(mappingsObj, i);
+        JsonValue* gmlKeyVal = JsonReader_getObjectValue(mappingsObj, i);
+        mappings[i].padButton = (uint16_t) atoi(padButtonStr);
+        mappings[i].gmlKey = (int32_t) JsonReader_getInt(gmlKeyVal);
+        printf("CONFIG.JSN: %s mapping pad=%d -> gmlKey=%d\n", logLabel, mappings[i].padButton, mappings[i].gmlKey);
+    }
+    *outMappings = mappings;
+    *outCount = count;
+}
+
+static void pollPad(Runner* runner, int port, PadMapping* mappings, int mappingCount, uint16_t* prev, bool* wasStable) {
+    int state = padGetState(port, 0);
+    bool stable = (state == PAD_STATE_STABLE);
+
+    if (!stable) {
+        if (*wasStable) {
+            // Disconnect edge: release every key whose button was held.
+            repeat(mappingCount, i) {
+                uint16_t mask = mappings[i].padButton;
+                if ((*prev & mask) == 0) {
+                    RunnerKeyboard_onKeyUp(runner->keyboard, mappings[i].gmlKey);
+                }
+            }
+            *prev = 0xFFFF;
+            *wasStable = false;
+        }
+        return;
+    }
+
+    if (!*wasStable) {
+        // Reconnect edge: avoid phantom presses from buttons that were held when the pad came back.
+        *prev = 0xFFFF;
+        *wasStable = true;
+    }
+
+    struct padButtonStatus padStatus;
+    unsigned char padResult = padRead(port, 0, &padStatus);
+    if (padResult == 0) return;
+
+    uint16_t buttons = padStatus.btns;
+    repeat(mappingCount, i) {
+        uint16_t mask = mappings[i].padButton;
+        int32_t gmlKey = mappings[i].gmlKey;
+
+        // PS2 buttons are active-low: 0 = pressed, 1 = released
+        bool wasPressed = (*prev & mask) == 0;
+        bool isPressed = (buttons & mask) == 0;
+
+        if (isPressed && !wasPressed) {
+            RunnerKeyboard_onKeyDown(runner->keyboard, gmlKey);
+        } else if (!isPressed && wasPressed) {
+            RunnerKeyboard_onKeyUp(runner->keyboard, gmlKey);
+        }
+    }
+    *prev = buttons;
+}
 
 // ===[ USB Keyboard ]===
 
@@ -407,7 +478,10 @@ int main(int argc, char* argv[]) {
     }
 
     padInit(0);
-    padPortOpen(0, 0, padBuf);
+    padOpened[0] = (padPortOpen(0, 0, padBuf[0]) != 0);
+    padOpened[1] = (padPortOpen(1, 0, padBuf[1]) != 0);
+    if (!padOpened[0]) printf("Warning: failed to open pad port 0\n");
+    if (!padOpened[1]) printf("Warning: failed to open pad port 1\n");
 
     // ===[ Load USB Keyboard IOP Modules ]===
     int usbdRet = SifExecModuleBuffer(usbd_irx, size_usbd_irx, 0, nullptr, nullptr);
@@ -580,19 +654,9 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Parse controllerMappings from CONFIG.JSN
-    JsonValue* controllerMappingsObj = JsonReader_getObject(configRoot, "controllerMappings");
-    if (controllerMappingsObj != nullptr && JsonReader_isObject(controllerMappingsObj)) {
-        padMappingCount = JsonReader_objectLength(controllerMappingsObj);
-        padMappings = safeMalloc(sizeof(PadMapping) * padMappingCount);
-        repeat(padMappingCount, i) {
-            const char* padButtonStr = JsonReader_getObjectKey(controllerMappingsObj, i);
-            JsonValue* gmlKeyVal = JsonReader_getObjectValue(controllerMappingsObj, i);
-            padMappings[i].padButton = (uint16_t) atoi(padButtonStr);
-            padMappings[i].gmlKey = (int32_t) JsonReader_getInt(gmlKeyVal);
-            printf("CONFIG.JSN: controllerMapping pad=%d -> gmlKey=%d\n", padMappings[i].padButton, padMappings[i].gmlKey);
-        }
-    }
+    // Parse pad mappings from CONFIG.JSN (one object per controller, both optional)
+    parsePadMappings(configRoot, "controller1Mappings", &pad1Mappings, &pad1MappingCount, "controller1");
+    parsePadMappings(configRoot, "controller2Mappings", &pad2Mappings, &pad2MappingCount, "controller2");
 
     {
         void* heapTop = sbrk(0);
@@ -637,29 +701,8 @@ int main(int argc, char* argv[]) {
         //
         // beginFrame is called after the game consumes input.
 
-        struct padButtonStatus padStatus;
-        unsigned char padResult = padRead(0, 0, &padStatus);
-        uint16_t buttons = 0xFFFF; // all released by default
-        if (padResult != 0) {
-            buttons = padStatus.btns;
-
-            repeat(padMappingCount, i) {
-                uint16_t mask = padMappings[i].padButton;
-                int32_t gmlKey = padMappings[i].gmlKey;
-
-                // PS2 buttons are active-low: 0 = pressed, 1 = released
-                bool wasPressed = (prevButtons & mask) == 0;
-                bool isPressed = (buttons & mask) == 0;
-
-                if (isPressed && !wasPressed) {
-                    RunnerKeyboard_onKeyDown(runner->keyboard, gmlKey);
-                } else if (!isPressed && wasPressed) {
-                    RunnerKeyboard_onKeyUp(runner->keyboard, gmlKey);
-                }
-            }
-
-            prevButtons = buttons;
-        }
+        if (padOpened[0]) pollPad(runner, 0, pad1Mappings, pad1MappingCount, &prevButtons[0], &padWasStable[0]);
+        if (padOpened[1]) pollPad(runner, 1, pad2Mappings, pad2MappingCount, &prevButtons[1], &padWasStable[1]);
 
         // ===[ Poll USB Keyboard ]===
         // Drain all pending RAW events this vsync so press/release edges aren't dropped.
@@ -683,8 +726,8 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // R2 removes speed cap (ignore waiting for vsync)
-        bool speedCapRemoved = (padResult != 0) && ((buttons & PAD_R2) == 0);
+        // R2 on pad1 removes speed cap (ignore waiting for vsync)
+        bool speedCapRemoved = padWasStable[0] && ((prevButtons[0] & PAD_R2) == 0);
 
         // Go to next room
         if (RunnerKeyboard_checkPressed(runner->keyboard, VK_PAGEUP)) {
