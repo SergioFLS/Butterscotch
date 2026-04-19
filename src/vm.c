@@ -509,19 +509,16 @@ static uint32_t resolveLocalSlot(VMContext* ctx, int32_t varID) {
 // target >= 0 && target < 100000: object index (find first instance of that object, checking parent chains)
 static Instance* findInstanceByTarget(VMContext* ctx, int32_t target) {
     Runner* runner = (Runner*) ctx->runner;
-    int32_t instanceCount = (int32_t) arrlen(runner->instances);
 
     if (target >= 100000) {
         // Instance ID - find specific instance
-        for (int32_t i = 0; instanceCount > i; i++) {
-            Instance* inst = runner->instances[i];
-            if (inst->active && (int32_t) inst->instanceId == target) return inst;
-        }
-        return nullptr;
+        Instance* inst = hmget(runner->instancesToId, target);
+        return (inst != nullptr && inst->active) ? inst : nullptr;
     }
 
     // Object index - find first matching instance, checking parent chains
-    for (int32_t i = 0; instanceCount > i; i++) {
+    int32_t instanceCount = (int32_t) arrlen(runner->instances);
+    repeat(instanceCount, i) {
         Instance* inst = runner->instances[i];
         if (inst->active && VM_isObjectOrDescendant(ctx->dataWin, inst->objectIndex, target)) return inst;
     }
@@ -2130,14 +2127,11 @@ static void handlePushEnv(VMContext* ctx, uint32_t instr, uint32_t instrAddr) {
     }
 
     if (target >= 100000) {
-        // Instance ID - find the specific instance
-        int32_t instanceCount = (int32_t) arrlen(runner->instances);
-        for (int32_t i = 0; instanceCount > i; i++) {
-            Instance* inst = runner->instances[i];
-            if (inst->active && (int32_t) inst->instanceId == target) {
-                switchToInstance(ctx, inst);
-                return;
-            }
+        // Instance ID - find specific instance
+        Instance* inst = hmget(runner->instancesToId, target);
+        if (inst != nullptr && inst->active) {
+            switchToInstance(ctx, inst);
+            return;
         }
 
         // Instance not found, skip the block

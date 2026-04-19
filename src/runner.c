@@ -913,14 +913,7 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
         RoomGameObject* roomObj = &room->gameObjects[i];
 
         // Skip if a persistent instance carried over from the previous room already owns this ID (re-entering the persistent instance's home room, don't create a duplicate!).
-        bool alreadyExists = false;
-        repeat(arrlen(carriedPersistent), j) {
-            if (carriedPersistent[j]->instanceId == roomObj->instanceID) {
-                alreadyExists = true;
-                break;
-            }
-        }
-        if (alreadyExists) continue;
+        if (hmget(runner->instancesToId, roomObj->instanceID) != nullptr) continue;
         if (isObjectDisabled(runner, roomObj->objectDefinition)) continue;
 
         Instance* inst = createAndInitInstance(runner, roomObj->instanceID, roomObj->objectDefinition, (GMLReal) roomObj->x, (GMLReal) roomObj->y);
@@ -951,17 +944,11 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
     repeat(room->gameObjectCount, i) {
         RoomGameObject* roomObj = &room->gameObjects[i];
 
-        // Find the instance we created (skip persistent ones that were kept)
-        Instance* inst = nullptr;
-        repeat(arrlen(runner->instances), j) {
-            if (runner->instances[j]->instanceId == roomObj->instanceID) {
-                inst = runner->instances[j];
-                break;
-            }
-        }
+        Instance* inst = hmget(runner->instancesToId, roomObj->instanceID);
         if (inst == nullptr) continue;
 
-        // Skip instances that already had their Create event fired (persistent carry-overs)
+        // Skip instances that already had their Create event fired (persistent carry-overs
+        // that hmget also matches, since instancesToId still holds them).
         if (inst->createEventFired) continue;
         inst->createEventFired = true;
 

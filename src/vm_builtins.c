@@ -1638,19 +1638,15 @@ static RValue builtinVariableInstanceGet(VMContext* ctx, RValue* args, int32_t a
     const char* name = args[1].string;
 
     Runner* runner = (Runner*) ctx->runner;
-    int32_t instanceCount = (int32_t) arrlen(runner->instances);
 
     if (id >= 100000) {
-        repeat(instanceCount, i) {
-            Instance* inst = runner->instances[i];
-            if (inst->active && (int32_t) inst->instanceId == id) {
-                return variableInstanceGetOn(ctx, inst, name);
-            }
-        }
+        Instance* inst = hmget(runner->instancesToId, id);
+        if (inst != nullptr && inst->active) return variableInstanceGetOn(ctx, inst, name);
         return RValue_makeUndefined();
     }
 
     // Object index: return value from first matching active instance
+    int32_t instanceCount = (int32_t) arrlen(runner->instances);
     repeat(instanceCount, i) {
         Instance* inst = runner->instances[i];
         if (inst->active && VM_isObjectOrDescendant(ctx->dataWin, inst->objectIndex, id)) {
@@ -1667,21 +1663,16 @@ static RValue builtinVariableInstanceSet(VMContext* ctx, RValue* args, int32_t a
     RValue val = args[2];
 
     Runner* runner = (Runner*) ctx->runner;
-    int32_t instanceCount = (int32_t) arrlen(runner->instances);
 
     if (id >= 100000) {
         // Specific instance ID
-        repeat(instanceCount, i) {
-            Instance* inst = runner->instances[i];
-            if (inst->active && (int32_t) inst->instanceId == id) {
-                variableInstanceSetOn(ctx, inst, name, val);
-                return RValue_makeUndefined();
-            }
-        }
+        Instance* inst = hmget(runner->instancesToId, id);
+        if (inst != nullptr && inst->active) variableInstanceSetOn(ctx, inst, name, val);
         return RValue_makeUndefined();
     }
 
     // Object index: set on all active instances matching (including descendants)
+    int32_t instanceCount = (int32_t) arrlen(runner->instances);
     repeat(instanceCount, i) {
         Instance* inst = runner->instances[i];
         if (inst->active && VM_isObjectOrDescendant(ctx->dataWin, inst->objectIndex, id)) {
@@ -1710,18 +1701,14 @@ static RValue builtinVariableInstanceExists(VMContext* ctx, RValue* args, int32_
     const char* name = args[1].string;
 
     Runner* runner = (Runner*) ctx->runner;
-    int32_t instanceCount = (int32_t) arrlen(runner->instances);
 
     if (id >= 100000) {
-        repeat(instanceCount, i) {
-            Instance* inst = runner->instances[i];
-            if (inst->active && (int32_t) inst->instanceId == id) {
-                return RValue_makeBool(variableInstanceExistsOn(ctx, inst, name));
-            }
-        }
+        Instance* inst = hmget(runner->instancesToId, id);
+        if (inst != nullptr && inst->active) return RValue_makeBool(variableInstanceExistsOn(ctx, inst, name));
         return RValue_makeBool(false);
     }
 
+    int32_t instanceCount = (int32_t) arrlen(runner->instances);
     repeat(instanceCount, i) {
         Instance* inst = runner->instances[i];
         if (inst->active && VM_isObjectOrDescendant(ctx->dataWin, inst->objectIndex, id)) {
@@ -1789,12 +1776,8 @@ static RValue builtinScriptExecute(VMContext* ctx, RValue* args, int32_t argCoun
 #if IS_BC17_OR_HIGHER_ENABLED
     if (args[0].type == RVALUE_METHOD && args[0].method->boundInstanceId >= 0) {
         Runner* runner = (Runner*) ctx->runner;
-        repeat(arrlen(runner->instances), i) {
-            if (runner->instances[i]->instanceId == (uint32_t) args[0].method->boundInstanceId) {
-                ctx->currentInstance = runner->instances[i];
-                break;
-            }
-        }
+        Instance* bound = hmget(runner->instancesToId, args[0].method->boundInstanceId);
+        if (bound != nullptr) ctx->currentInstance = bound;
     }
 #endif
 
@@ -3199,9 +3182,9 @@ static RValue builtinInstanceExists(VMContext* ctx, RValue* args, int32_t argCou
     Runner* runner = (Runner*) ctx->runner;
     int32_t id = RValue_toInt32(args[0]);
     bool found = false;
-    int32_t instanceCount = (int32_t) arrlen(runner->instances);
     if (id >= 0 && runner->dataWin->objt.count > (uint32_t) id) {
         // Object type index: search for any active instance of this object (or descendants)
+        int32_t instanceCount = (int32_t) arrlen(runner->instances);
         repeat(instanceCount, i) {
             Instance* inst = runner->instances[i];
             if (inst->active && VM_isObjectOrDescendant(ctx->dataWin, inst->objectIndex, id)) {
@@ -3211,13 +3194,8 @@ static RValue builtinInstanceExists(VMContext* ctx, RValue* args, int32_t argCou
         }
     } else {
         // Instance ID: search for a specific instance
-        repeat(instanceCount, i) {
-            Instance* inst = runner->instances[i];
-            if (inst->active && inst->instanceId == (uint32_t) id) {
-                found = true;
-                break;
-            }
-        }
+        Instance* inst = hmget(runner->instancesToId, id);
+        found = (inst != nullptr && inst->active);
     }
     return RValue_makeBool(found);
 }
@@ -3233,9 +3211,9 @@ static RValue builtinInstanceDestroy(VMContext* ctx, RValue* args, int32_t argCo
     }
     // 1 arg: find and destroy matching instances
     int32_t id = RValue_toInt32(args[0]);
-    int32_t instanceCount = (int32_t) arrlen(runner->instances);
     if (id >= 0 && runner->dataWin->objt.count > (uint32_t) id) {
         // Object type index: destroy all active instances of this object (or descendants)
+        int32_t instanceCount = (int32_t) arrlen(runner->instances);
         repeat(instanceCount, i) {
             Instance* inst = runner->instances[i];
             if (inst->active && VM_isObjectOrDescendant(ctx->dataWin, inst->objectIndex, id)) {
@@ -3243,14 +3221,8 @@ static RValue builtinInstanceDestroy(VMContext* ctx, RValue* args, int32_t argCo
             }
         }
     } else {
-        // Instance ID: destroy that specific instance
-        repeat(instanceCount, i) {
-            Instance* inst = runner->instances[i];
-            if (inst->active && inst->instanceId == (uint32_t) id) {
-                Runner_destroyInstance(runner, inst);
-                break;
-            }
-        }
+        Instance* inst = hmget(runner->instancesToId, id);
+        if (inst != nullptr && inst->active) Runner_destroyInstance(runner, inst);
     }
     return RValue_makeUndefined();
 }
