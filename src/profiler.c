@@ -8,14 +8,16 @@
 #include "stb_ds.h"
 #include "string_builder.h"
 
-#ifdef PLATFORM_PS2
+#if defined(PLATFORM_PS2)
 #include <timer.h>
+#elif defined(_WIN32)
+#include <windows.h>
 #else
 #include <time.h>
 #endif
 
 static uint64_t nowNanos(void) {
-#ifdef PLATFORM_PS2
+#if defined(PLATFORM_PS2)
     // kBUSCLK is bus clock ticks per second (~147 MHz).
     // Split to avoid u64 overflow in ticks * 1e9.
     uint64_t t = (uint64_t) GetTimerSystemTime();
@@ -23,6 +25,20 @@ static uint64_t nowNanos(void) {
     uint64_t sec = t / clk;
     uint64_t rem = t % clk;
     return sec * 1000000000ull + (rem * 1000000000ull) / clk;
+#elif defined(_WIN32)
+    static LARGE_INTEGER freq;
+    static bool freqInitialized = false;
+    if (!freqInitialized) {
+        QueryPerformanceFrequency(&freq);
+        freqInitialized = true;
+    }
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    uint64_t t = (uint64_t) now.QuadPart;
+    uint64_t f = (uint64_t) freq.QuadPart;
+    uint64_t sec = t / f;
+    uint64_t rem = t % f;
+    return sec * 1000000000ull + (rem * 1000000000ull) / f;
 #else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
