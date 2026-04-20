@@ -70,6 +70,7 @@
 #define OP_POP      0x45
 #define OP_PUSHI    0x84
 #define OP_DUP      0x86
+#define OP_CALLV    0x99
 #define OP_RET      0x9C
 #define OP_EXIT     0x9D
 #define OP_POPZ     0x9E

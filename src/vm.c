@@ -2007,6 +2007,63 @@ static void handleCall(VMContext* ctx, uint32_t instr, const uint8_t* extraData)
     stackPush(ctx, RValue_makeUndefined());
 }
 
+#if IS_BC17_OR_HIGHER_ENABLED
+// BC17+ CALLV: dynamic call through a variable (method/script reference).
+// Stack layout (top -> bottom): function, instance, arg[N-1], ..., arg[0]
+// argCount is in the low 16 bits of the instruction.
+static void handleCallV(VMContext* ctx, uint32_t instr) {
+    int32_t argCount = instr & 0xFFFF;
+
+    RValue function = stackPop(ctx);
+    RValue instance = stackPop(ctx);
+
+    RValue stackArgs[GML_MAX_ARGUMENTS];
+    RValue* args = nullptr;
+    if (argCount > 0) {
+        args = (GML_MAX_ARGUMENTS >= argCount) ? stackArgs : safeMalloc(argCount * sizeof(RValue));
+        repeat(argCount, i) {
+            args[i] = stackPop(ctx);
+        }
+    }
+
+    int32_t codeIndex = -1;
+    int32_t boundInstance = -1;
+    if (function.type == RVALUE_METHOD && function.method != nullptr) {
+        codeIndex = function.method->codeIndex;
+        boundInstance = function.method->boundInstanceId;
+    }
+
+    // Decide target self: prefer method's bound instance, else the stack-provided instance.
+    int32_t targetInstance = (boundInstance > 0) ? boundInstance : RValue_toInt32(instance);
+    Instance* savedSelf = ctx->currentInstance;
+    if (targetInstance != INSTANCE_SELF && targetInstance != 0) {
+        Instance* target = findInstanceByTarget(ctx, targetInstance);
+        if (target != nullptr) ctx->currentInstance = target;
+    }
+
+    RValue result;
+    if (codeIndex >= 0 && ctx->dataWin->code.count > (uint32_t) codeIndex) {
+        result = VM_callCodeIndex(ctx, codeIndex, args, argCount);
+    } else {
+        fprintf(stderr, "VM: [%s] CALLV with unresolvable function reference (type=%d, codeIndex=%d)\n", ctx->currentCodeName, function.type, codeIndex);
+        result = RValue_makeUndefined();
+    }
+
+    ctx->currentInstance = savedSelf;
+
+    RValue_free(&function);
+    RValue_free(&instance);
+    if (args != nullptr) {
+        repeat(argCount, i) {
+            RValue_free(&args[i]);
+        }
+        if (args != stackArgs) free(args);
+    }
+
+    stackPushTyped(ctx, result, GML_TYPE_VARIABLE);
+}
+#endif
+
 // ===[ With-Statement Helpers (PushEnv/PopEnv) ]===
 
 // Checks if objectIndex is or inherits from targetObjectIndex by walking the parent chain.
@@ -2214,6 +2271,7 @@ static const char* opcodeName(uint8_t opcode) {
         case OP_PUSHGLB: return "PushGlb";
         case OP_PUSHBLTN:return "PushBltn";
         case OP_CALL:    return "Call";
+        case OP_CALLV:   return "CallV";
         case OP_BREAK:   return "Break";
         default:         return "???";
     }
@@ -2458,6 +2516,11 @@ static RValue executeLoop(VMContext* ctx) {
             case OP_CALL:
                 handleCall(ctx, instr, extraData);
                 break;
+#if IS_BC17_OR_HIGHER_ENABLED
+            case OP_CALLV:
+                handleCallV(ctx, instr);
+                break;
+#endif
 
             // Return
             case OP_RET: {
@@ -3234,6 +3297,15 @@ static void formatInstruction(VMContext* ctx, const uint8_t* bytecodeBase, uint3
             } else {
                 snprintf(commentStr, commentSize, "// pushes: [result]");
             }
+            break;
+        }
+
+        // Dynamic call through variable/method reference (BC17+)
+        case OP_CALLV: {
+            int32_t argCount = instr & 0xFFFF;
+            snprintf(opcodeStr, opcodeSize, "CallV.v");
+            snprintf(operandStr, operandSize, "%d", argCount);
+            snprintf(commentStr, commentSize, "// pops: [func, instance, %d args] -> pushes: [result]", argCount);
             break;
         }
 
