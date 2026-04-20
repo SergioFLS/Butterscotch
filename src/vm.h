@@ -15,6 +15,7 @@
 #define INSTANCE_ALL       (-3)
 #define INSTANCE_NOONE     (-4)
 #define INSTANCE_GLOBAL    (-5)
+#define INSTANCE_BUILTIN   (-6)
 #define INSTANCE_LOCAL     (-7)
 #define INSTANCE_STACKTOP  (-9)
 #define INSTANCE_ARG       (-15)

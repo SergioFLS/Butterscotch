@@ -586,6 +586,27 @@ static RValue resolveVariableRead(VMContext* ctx, int32_t instanceType, uint32_t
         return result;
     }
 
+#if IS_BC17_OR_HIGHER_ENABLED
+    // BC17+: instanceType == INSTANCE_BUILTIN (-6) on a Push.v means "look up this name as a function reference" (emitted for CallV dispatch paths like `@@This@@(); texture_set_interpolation_ext; CallV`).
+    // Intercept before the builtin-variable path: only treat it as a function if the VARI entry isn't a real built-in variable (varID == -6 with a resolved builtinVarId).
+    if (IS_BC17_OR_HIGHER(ctx) && instanceType == INSTANCE_BUILTIN && !(varDef->varID == -6 && varDef->builtinVarId != -1)) {
+        // Try user scripts/code entries first (funcMap maps both "funcName" and "gml_Script_funcName")
+        ptrdiff_t mapIdx = shgeti(ctx->funcMap, varDef->name);
+        if (mapIdx >= 0) {
+            int32_t codeIndex = ctx->funcMap[mapIdx].value;
+            return RValue_makeMethod(codeIndex, -1);
+        }
+        // Then try registered built-ins
+        ptrdiff_t bidx = shgeti(ctx->builtinMap, (char*) varDef->name);
+        if (bidx >= 0) {
+            BuiltinFunc bf = ctx->builtinMap[bidx].value;
+            return (RValue){ .method = GMLMethod_createBuiltin(bf, -1), .type = RVALUE_METHOD, .ownsString = true, .gmlStackType = GML_TYPE_VARIABLE };
+        }
+        // Unresolved: return a method stub so CallV can log a single "unknown function" and return undefined instead of bailing out with a scary "unresolvable function reference" error.
+        return (RValue){ .method = GMLMethod_createUnresolved(varDef->name, -1), .type = RVALUE_METHOD, .ownsString = true, .gmlStackType = GML_TYPE_VARIABLE };
+    }
+#endif
+
     // Check for built-in variable (varID == -6 sentinel)
     if (varDef->varID == -6) {
         // For object/instance references, temporarily swap currentInstance so VMBuiltins reads the correct instance
@@ -2034,9 +2055,13 @@ static void handleCallV(VMContext* ctx, uint32_t instr) {
 
     int32_t codeIndex = -1;
     int32_t boundInstance = -1;
+    BuiltinFunc builtin = nullptr;
+    const char* unresolvedName = nullptr;
     if (function.type == RVALUE_METHOD && function.method != nullptr) {
         codeIndex = function.method->codeIndex;
         boundInstance = function.method->boundInstanceId;
+        builtin = (BuiltinFunc) function.method->builtin;
+        unresolvedName = function.method->unresolvedName;
     }
 
     // Decide target self: prefer method's bound instance, else the stack-provided instance.
@@ -2050,6 +2075,18 @@ static void handleCallV(VMContext* ctx, uint32_t instr) {
     RValue result;
     if (codeIndex >= 0 && ctx->dataWin->code.count > (uint32_t) codeIndex) {
         result = VM_callCodeIndex(ctx, codeIndex, args, argCount);
+    } else if (builtin != nullptr) {
+        result = builtin(ctx, args, argCount);
+    } else if (unresolvedName != nullptr) {
+        const char* callerName = VM_getCallerName(ctx);
+        char* dedupKey = VM_createDedupKey(callerName, unresolvedName);
+        if (ctx->alwaysLogUnknownFunctions || 0 > shgeti(ctx->loggedUnknownFuncs, dedupKey)) {
+            shput(ctx->loggedUnknownFuncs, dedupKey, true);
+            fprintf(stderr, "VM: [%s] Unknown function \"%s\"! (via CallV)\n", callerName, unresolvedName);
+        } else {
+            free(dedupKey);
+        }
+        result = RValue_makeUndefined();
     } else {
         fprintf(stderr, "VM: [%s] CALLV with unresolvable function reference (type=%d, codeIndex=%d)\n", ctx->currentCodeName, function.type, codeIndex);
         result = RValue_makeUndefined();
