@@ -5,6 +5,8 @@
 #include "binary_utils.h"
 #include "utils.h"
 #include "bytecode_versions.h"
+#include "profiler.h"
+#include "string_builder.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,7 +16,7 @@
 #include "stb_ds.h"
 
 // Maximum number of local variables per code entry (stack-allocated arrays in VM_executeCode/VM_callCodeIndex)
-#define MAX_CODE_LOCALS 64
+#define MAX_CODE_LOCALS 128
 
 // ===[ Stack Operations ]===
 
@@ -27,24 +29,18 @@ static bool shouldTraceStack(VMContext* ctx) {
 
 // Returns a heap-allocated "[elem0, elem1, ..., elemN]" string for the current stack contents (bottom -> top). Caller frees.
 static char* formatStackContents(VMContext* ctx) {
-    size_t cap = 256;
-    size_t len = 1;
-    char* buf = safeCalloc(cap, sizeof(char));
-    buf[0] = '[';
+    StringBuilder sb = StringBuilder_create(256);
+    StringBuilder_appendChar(&sb, '[');
     repeat(ctx->stack.top, si) {
         char* typed = RValue_toStringTyped(ctx->stack.slots[si]);
-        const char* sep = (si > 0) ? ", " : "";
-        size_t needed = strlen(sep) + strlen(typed) + 2;
-        if (len + needed > cap) {
-            cap = (len + needed) * 2;
-            buf = realloc(buf, cap);
-        }
-        len += sprintf(buf + len, "%s%s", sep, typed);
+        if (si > 0) StringBuilder_append(&sb, ", ");
+        StringBuilder_append(&sb, typed);
         free(typed);
     }
-    buf[len++] = ']';
-    buf[len] = '\0';
-    return buf;
+    StringBuilder_appendChar(&sb, ']');
+    char* result = StringBuilder_toString(&sb);
+    StringBuilder_free(&sb);
+    return result;
 }
 #endif
 
@@ -255,34 +251,34 @@ static RValue VM_arrayReadAt(RValue* slot, int32_t index) {
     if (slot == nullptr || slot->type != RVALUE_ARRAY || slot->array == nullptr) {
         return (RValue){ .type = RVALUE_UNDEFINED };
     }
-    GMLArray* arr = slot->array;
-    if (0 > index || index >= arr->length) {
+    RValue* cell = GMLArray_slot(slot->array, index);
+    if (cell == nullptr) {
         return (RValue){ .type = RVALUE_UNDEFINED };
     }
-    RValue result = arr->data[index];
+    RValue result = *cell;
     result.ownsString = false;
     return result;
 }
 
-// Copies "val" into arr->data[index]: dup string buffers, incRef arrays. Caller retains "val".
-static void storeIntoArraySlot(RValue* slot, int32_t index, RValue val) {
+// Copies "val" into *slot: dup string buffers, incRef arrays. Caller retains "val".
+static void storeIntoArraySlot(RValue* slot, RValue val) {
     // Free whatever was there (decRefs owned arrays, frees owned strings).
-    RValue_free(&slot[index]);
+    RValue_free(slot);
     if (val.type == RVALUE_STRING && val.string != nullptr) {
-        slot[index] = RValue_makeOwnedString(safeStrdup(val.string));
+        *slot = RValue_makeOwnedString(safeStrdup(val.string));
     } else if (val.type == RVALUE_ARRAY && val.array != nullptr) {
         GMLArray_incRef(val.array);
         val.ownsString = true;
-        slot[index] = val;
+        *slot = val;
 #if IS_BC17_OR_HIGHER_ENABLED
     } else if (val.type == RVALUE_METHOD && val.method != nullptr) {
         GMLMethod_incRef(val.method);
         val.ownsString = true;
-        slot[index] = val;
+        *slot = val;
 #endif
     } else {
         val.ownsString = false;
-        slot[index] = val;
+        *slot = val;
     }
 }
 
@@ -307,7 +303,7 @@ static GMLArray* VM_arrayWriteAt(VMContext* ctx, RValue* slot, int32_t index, RV
         fresh->owner = intendedOwner;
         *slot = RValue_makeArray(fresh);
         GMLArray_growTo(fresh, index + 1);
-        storeIntoArraySlot(fresh->data, index, val);
+        storeIntoArraySlot(GMLArray_slot(fresh, index), val);
         return fresh;
     }
 
@@ -336,7 +332,7 @@ static GMLArray* VM_arrayWriteAt(VMContext* ctx, RValue* slot, int32_t index, RV
 
     // Case 3: grow if needed, then write.
     GMLArray_growTo(arr, index + 1);
-    storeIntoArraySlot(arr->data, index, val);
+    storeIntoArraySlot(GMLArray_slot(arr, index), val);
     return arr;
 }
 
@@ -354,7 +350,7 @@ void VM_arraySet(MAYBE_UNUSED VMContext* ctx, RValue* arrayRef, int32_t index, R
     require(arrayRef != nullptr && arrayRef->type == RVALUE_ARRAY && arrayRef->array != nullptr);
     GMLArray* arr = arrayRef->array;
     GMLArray_growTo(arr, index + 1);
-    storeIntoArraySlot(arr->data, index, val);
+    storeIntoArraySlot(GMLArray_slot(arr, index), val);
 }
 
 // ===[ Trace Helpers ]===
@@ -509,19 +505,16 @@ static uint32_t resolveLocalSlot(VMContext* ctx, int32_t varID) {
 // target >= 0 && target < 100000: object index (find first instance of that object, checking parent chains)
 static Instance* findInstanceByTarget(VMContext* ctx, int32_t target) {
     Runner* runner = (Runner*) ctx->runner;
-    int32_t instanceCount = (int32_t) arrlen(runner->instances);
 
     if (target >= 100000) {
         // Instance ID - find specific instance
-        for (int32_t i = 0; instanceCount > i; i++) {
-            Instance* inst = runner->instances[i];
-            if (inst->active && (int32_t) inst->instanceId == target) return inst;
-        }
-        return nullptr;
+        Instance* inst = hmget(runner->instancesToId, target);
+        return (inst != nullptr && inst->active) ? inst : nullptr;
     }
 
     // Object index - find first matching instance, checking parent chains
-    for (int32_t i = 0; instanceCount > i; i++) {
+    int32_t instanceCount = (int32_t) arrlen(runner->instances);
+    repeat(instanceCount, i) {
         Instance* inst = runner->instances[i];
         if (inst->active && VM_isObjectOrDescendant(ctx->dataWin, inst->objectIndex, target)) return inst;
     }
@@ -1099,15 +1092,16 @@ static void handlePush(VMContext* ctx, uint32_t instr, const uint8_t* extraData)
                 }
                 GMLArray* top = slot->array;
                 GMLArray_growTo(top, firstIndex + 1);
+                RValue* topSlot = GMLArray_slot(top, firstIndex);
                 // Materialise the sub-array at [firstIndex] if it's not already an array.
-                if (top->data[firstIndex].type != RVALUE_ARRAY || top->data[firstIndex].array == nullptr) {
-                    RValue_free(&top->data[firstIndex]);
+                if (topSlot->type != RVALUE_ARRAY || topSlot->array == nullptr) {
+                    RValue_free(topSlot);
                     GMLArray* sub = GMLArray_create(0);
                     sub->owner = top->owner;
-                    top->data[firstIndex] = (RValue){ .array = sub, .type = RVALUE_ARRAY, .ownsString = true, RVALUE_INIT_GMLTYPE(GML_TYPE_VARIABLE) };
+                    *topSlot = (RValue){ .array = sub, .type = RVALUE_ARRAY, .ownsString = true, RVALUE_INIT_GMLTYPE(GML_TYPE_VARIABLE) };
                 }
                 // Push a weak ref to the sub-array — short-lived, consumed by the next BREAK op.
-                stackPush(ctx, RValue_makeArrayWeak(top->data[firstIndex].array));
+                stackPush(ctx, RValue_makeArrayWeak(topSlot->array));
             } else
 #endif
             {
@@ -2130,14 +2124,11 @@ static void handlePushEnv(VMContext* ctx, uint32_t instr, uint32_t instrAddr) {
     }
 
     if (target >= 100000) {
-        // Instance ID - find the specific instance
-        int32_t instanceCount = (int32_t) arrlen(runner->instances);
-        for (int32_t i = 0; instanceCount > i; i++) {
-            Instance* inst = runner->instances[i];
-            if (inst->active && (int32_t) inst->instanceId == target) {
-                switchToInstance(ctx, inst);
-                return;
-            }
+        // Instance ID - find specific instance
+        Instance* inst = hmget(runner->instancesToId, target);
+        if (inst != nullptr && inst->active) {
+            switchToInstance(ctx, inst);
+            return;
         }
 
         // Instance not found, skip the block
@@ -2249,8 +2240,9 @@ static void handleBreakPushAF(VMContext* ctx) {
     int32_t idx = stackPopInt32(ctx);
     RValue arrayRef = stackPop(ctx);
     RValue result;
-    if (arrayRef.type == RVALUE_ARRAY && arrayRef.array != nullptr && idx >= 0 && idx < arrayRef.array->length) {
-        result = arrayRef.array->data[idx];
+    RValue* cell = arrayRef.type == RVALUE_ARRAY ? GMLArray_slot(arrayRef.array, idx) : nullptr;
+    if (cell != nullptr) {
+        result = *cell;
         result.ownsString = false; // weak view
     } else {
         result = (RValue){ .type = RVALUE_UNDEFINED };
@@ -2271,7 +2263,7 @@ static void handleBreakPopAF(VMContext* ctx) {
         GMLArray* arr = arrayRef.array;
         requireMessage(arr->refCount == 1 || arr->owner == ctx->currentArrayOwner, "BREAK_POPAF: Writing through shared/aliased array without prior CoW fork");
         GMLArray_growTo(arr, idx + 1);
-        storeIntoArraySlot(arr->data, idx, value);
+        storeIntoArraySlot(GMLArray_slot(arr, idx), value);
     }
     RValue_free(&arrayRef);
     RValue_free(&value);
@@ -2287,13 +2279,14 @@ static void handleBreakPushAC(VMContext* ctx, uint32_t instrAddr) {
     }
     GMLArray* parent = arrayRef.array;
     GMLArray_growTo(parent, idx + 1);
-    if (parent->data[idx].type != RVALUE_ARRAY || parent->data[idx].array == nullptr) {
-        RValue_free(&parent->data[idx]);
+    RValue* parentSlot = GMLArray_slot(parent, idx);
+    if (parentSlot->type != RVALUE_ARRAY || parentSlot->array == nullptr) {
+        RValue_free(parentSlot);
         GMLArray* sub = GMLArray_create(0);
         sub->owner = parent->owner;
-        parent->data[idx] = (RValue){ .array = sub, .type = RVALUE_ARRAY, .ownsString = true, RVALUE_INIT_GMLTYPE(GML_TYPE_VARIABLE) };
+        *parentSlot = (RValue){ .array = sub, .type = RVALUE_ARRAY, .ownsString = true, RVALUE_INIT_GMLTYPE(GML_TYPE_VARIABLE) };
     }
-    stackPush(ctx, RValue_makeArrayWeak(parent->data[idx].array));
+    stackPush(ctx, RValue_makeArrayWeak(parentSlot->array));
     RValue_free(&arrayRef);
 }
 
@@ -2356,6 +2349,8 @@ static void handleBreak(VMContext* ctx, uint32_t instr, uint32_t instrAddr) {
 
 static RValue executeLoop(VMContext* ctx) {
     while (ctx->codeEnd > ctx->ip) {
+        if (ctx->profiler != nullptr)
+            Profiler_tickInstruction(ctx->profiler);
         uint32_t instrAddr = ctx->ip;
         uint32_t instr = BinaryUtils_readUint32(ctx->bytecodeBase + ctx->ip);
         ctx->ip += 4;
@@ -2517,6 +2512,8 @@ VMContext* VM_create(DataWin* dataWin) {
     ctx->currentEventType = -1;
     ctx->currentEventSubtype = -1;
     ctx->currentEventObjectIndex = -1;
+
+    ctx->profiler = nullptr; // lazily allocated by Profiler_setEnabled(&ctx->profiler, true)
 
     // Validate that no code entry exceeds MAX_CODE_LOCALS (the VM uses stack-allocated arrays of this size)
     repeat(dataWin->code.count, i) {
@@ -2729,6 +2726,26 @@ static void setCurrentCodeLocals(VMContext* ctx, CodeLocals* codeLocals) {
     }
 }
 
+static uint32_t computeLocalsCount(VMContext* ctx) {
+    // CodeLocals is the authoritative source for local variable count (not code->localsCount).
+    // Array-valued locals now live inline in localVars[] as RVALUE_ARRAY entries, no side map.
+    // The slot map may have grown beyond CodeLocals->localVarCount due to prior runs that encountered array-only locals missing from CodeLocals, so take the larger of the two.
+    //
+    // For some reason in GameMaker: Studio 2.3+ some code doesn't have code locals, why?
+    // If they don't have code locals, then we'll just use 0 anyway...
+    uint32_t localsCount = 0;
+    if (ctx->currentCodeLocals != nullptr) {
+        localsCount = ctx->currentCodeLocals->localVarCount;
+        if (ctx->currentCodeLocalsSlotMap != nullptr) {
+            uint32_t mapSize = (uint32_t) hmlen(ctx->currentCodeLocalsSlotMap);
+            if (mapSize > localsCount) localsCount = mapSize;
+        }
+    }
+    if (localsCount == 0) localsCount = 1;
+    requireMessage(MAX_CODE_LOCALS >= localsCount, "Code has too many locals!");
+    return localsCount;
+}
+
 RValue VM_executeCode(VMContext* ctx, int32_t codeIndex) {
     require(codeIndex >= 0 && ctx->dataWin->code.count > (uint32_t) codeIndex);
     CodeEntry* code = &ctx->dataWin->code.entries[codeIndex];
@@ -2742,15 +2759,7 @@ RValue VM_executeCode(VMContext* ctx, int32_t codeIndex) {
     // Resolve CodeLocals for local variable slot mapping
     setCurrentCodeLocals(ctx, resolveCodeLocals(ctx, code->name));
 
-    // Allocate locals. CodeLocals is the authoritative source for local variable count (not code->localsCount).
-    // Array-valued locals now live inline in localVars[] as RVALUE_ARRAY entries — no side map.
-    // The slot map may have grown beyond CodeLocals->localVarCount due to prior runs that encountered array-only locals missing from CodeLocals, so take the larger of the two.
-    uint32_t localsCount = ctx->currentCodeLocals->localVarCount;
-    if (ctx->currentCodeLocalsSlotMap != nullptr) {
-        uint32_t mapSize = (uint32_t) hmlen(ctx->currentCodeLocalsSlotMap);
-        if (mapSize > localsCount) localsCount = mapSize;
-    }
-    if (localsCount == 0) localsCount = 1;
+    uint32_t localsCount = computeLocalsCount(ctx);
     RValue localVars[MAX_CODE_LOCALS];
     ctx->localVars = localVars;
     ctx->localVarCount = localsCount;
@@ -2764,7 +2773,9 @@ RValue VM_executeCode(VMContext* ctx, int32_t codeIndex) {
     int32_t savedSavearefBalance = ctx->savearefBalance;
     ctx->savearefBalance = 0;
 
+    Profiler_enter(ctx->profiler, code->name);
     RValue result = executeLoop(ctx);
+    Profiler_exit(ctx->profiler);
 
     requireMessage(ctx->savearefBalance == 0, "SAVEAREF/RESTOREAREF imbalance at end of VM_executeCode (unpaired SAVEAREF)");
     ctx->savearefBalance = savedSavearefBalance;
@@ -2811,15 +2822,9 @@ RValue VM_callCodeIndex(VMContext* ctx, int32_t codeIndex, RValue* args, int32_t
     ctx->currentCodeIndex = codeIndex;
     setCurrentCodeLocals(ctx, resolveCodeLocals(ctx, code->name));
 
+    uint32_t localsCount = computeLocalsCount(ctx);
     // We use fixed-size arrays instead of VLAs because it seems that using multiple VLAs in a single function things get corrupted somehow?
     // So when you see this MAX_CODE_LOCALS and GML_MAX_ARGUMENTS, you can shake your fist in the air and say "damn you MIPS!!1"
-    // The slot map may have grown beyond CodeLocals->localVarCount due to prior runs that encountered array-only locals missing from CodeLocals, so take the larger of the two.
-    uint32_t localsCount = ctx->currentCodeLocals->localVarCount;
-    if (ctx->currentCodeLocalsSlotMap != nullptr) {
-        uint32_t mapSize = (uint32_t) hmlen(ctx->currentCodeLocalsSlotMap);
-        if (mapSize > localsCount) localsCount = mapSize;
-    }
-    if (localsCount == 0) localsCount = 1;
     RValue localVars[MAX_CODE_LOCALS];
     ctx->localVars = localVars;
     ctx->localVarCount = localsCount;
@@ -2854,7 +2859,9 @@ RValue VM_callCodeIndex(VMContext* ctx, int32_t codeIndex, RValue* args, int32_t
     ctx->savearefBalance = 0;
 
     // Execute the callee
+    Profiler_enter(ctx->profiler, code->name);
     RValue result = executeLoop(ctx);
+    Profiler_exit(ctx->profiler);
 
     requireMessage(ctx->savearefBalance == 0, "SAVEAREF/RESTOREAREF imbalance at end of VM_callCodeIndex (unpaired SAVEAREF)");
 
@@ -3462,6 +3469,10 @@ void VM_free(VMContext* ctx) {
 
     // Reset mutable runtime state
     VM_reset(ctx);
+
+    // Free profiler (no-op if never enabled)
+    Profiler_destroy(ctx->profiler);
+    ctx->profiler = nullptr;
 
     // Free global vars array itself
     free(ctx->globalVars);

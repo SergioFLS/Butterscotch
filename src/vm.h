@@ -7,6 +7,7 @@
 #include "data_win.h"
 #include "rvalue.h"
 #include "utils.h"
+#include "profiler.h"
 
 // ===[ Instance Types (signed 16-bit) ]===
 #define INSTANCE_SELF      (-1)
@@ -246,6 +247,7 @@ typedef struct VMContext {
     // Minimum frameCount before opcode/stack traces are emitted (default 0)
     int traceBytecodeAfterFrame;
 #endif
+    Profiler* profiler;
 
     // Stack at the end because it is a big chunky boi (we don't want it pushing fields around)
     VMStack stack;

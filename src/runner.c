@@ -250,49 +250,24 @@ void Runner_executeEvent(Runner* runner, Instance* instance, int32_t eventType, 
     Runner_executeEventFromObject(runner, instance, instance->objectIndex, eventType, eventSubtype);
 }
 
-// Pair used for stable sorting: holds the instance pointer and its original array position.
-typedef struct {
-    Instance* inst;
-    int32_t originalIndex;
-} IndexedInstance;
-
-// Comparator for per-object-type event dispatch (ascending objectIndex).
-static int compareInstanceByObjectIndex(const void* a, const void* b) {
-    const IndexedInstance* ia = (const IndexedInstance*) a;
-    const IndexedInstance* ib = (const IndexedInstance*) b;
-    // Primary: group by objectIndex ascending (lower object index executes first)
-    if (ia->inst->objectIndex < ib->inst->objectIndex) return -1;
-    if (ib->inst->objectIndex < ia->inst->objectIndex) return 1;
-    // Secondary: preserve creation order within the same object type
-    if (ia->originalIndex < ib->originalIndex) return -1;
-    if (ib->originalIndex < ia->originalIndex) return 1;
-    return 0;
-}
-
 void Runner_executeEventForAll(Runner* runner, int32_t eventType, int32_t eventSubtype) {
-    // Dispatch events per-object-type, matching the native GMS 1.4 and 2.0 runners
-    // The native runners iterate a prebuilt array of object indices (objects that have handlers for this event),
-    // then for each object type iterate all its instances. We approximate this by sorting all active instances by
-    // objectIndex (ascending), preserving creation order as the tiebreaker within the same object type
+    // Matches the native GMS 1.4/2.x runner's Perform_Event_All: walk the room's active instance linked list in forward insertion order (oldest first), skipping destroyed instances.
+    //
+    // Ordering note: a room's own instances are loaded first at initRoom time, then persistent instances carried over from the previous room are appended at the end. That is what the
     int32_t count = (int32_t) arrlen(runner->instances);
-    IndexedInstance* sorted = nullptr;
+    // Snapshot the iteration list: events may create new instances (appended to runner->instances) and we do NOT want those to fire in this phase, matching GM semantics where only pre-existing instances run the current event phase.
+    Instance** snapshot = nullptr;
+    arrsetcap(snapshot, count);
     repeat(count, i) {
-        Instance* inst = runner->instances[i];
+        arrput(snapshot, runner->instances[i]);
+    }
+    repeat(count, i) {
+        Instance* inst = snapshot[i];
         if (inst->active) {
-            IndexedInstance ii = { .inst = inst, .originalIndex = i };
-            arrput(sorted, ii);
+            Runner_executeEvent(runner, inst, eventType, eventSubtype);
         }
     }
-    int32_t sortedCount = (int32_t) arrlen(sorted);
-    if (sortedCount > 1) {
-        qsort(sorted, sortedCount, sizeof(IndexedInstance), compareInstanceByObjectIndex);
-    }
-    repeat(sortedCount, i) {
-        if (sorted[i].inst->active) {
-            Runner_executeEvent(runner, sorted[i].inst, eventType, eventSubtype);
-        }
-    }
-    arrfree(sorted);
+    arrfree(snapshot);
 }
 
 // ===[ Background Scrolling & Drawing ]===
@@ -759,6 +734,35 @@ static Instance* createAndInitInstance(Runner* runner, int32_t instanceId, int32
 
 // ===[ Room Management ]===
 
+// Collect persistent instances from the previous room (they travel with the player), and free the rest.
+// You should re-append them at the tail AFTER creating the new room's own instances, so the iteration order matches the native runner: room-local instances first, persistent arrivals last.
+static Instance** takePersistentInstances(Runner* runner) {
+    Instance** carriedPersistent = nullptr;
+    int32_t oldCount = (int32_t) arrlen(runner->instances);
+    repeat(oldCount, i) {
+        Instance* inst = runner->instances[i];
+        if (inst->persistent) {
+            arrput(carriedPersistent, inst);
+        } else {
+            hmdel(runner->instancesToId, inst->instanceId);
+            Instance_free(inst);
+        }
+    }
+
+    arrfree(runner->instances);
+    runner->instances = nullptr;
+
+    return carriedPersistent;
+}
+
+// Append the carried-over persistent instances at the tail of runner->instances and free the temporary array. Pairs with takePersistentInstances.
+static void returnPersistentInstances(Runner* runner, Instance** carriedPersistent) {
+    repeat(arrlen(carriedPersistent), i) {
+        arrput(runner->instances, carriedPersistent[i]);
+    }
+    arrfree(carriedPersistent);
+}
+
 static void initRoom(Runner* runner, int32_t roomIndex) {
     DataWin* dataWin = runner->dataWin;
     require(roomIndex >= 0 && dataWin->room.count > (uint32_t) roomIndex);
@@ -801,30 +805,18 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
         runner->runtimeLayers = savedState->runtimeLayers;
         savedState->runtimeLayers = nullptr;
 
-        // Keep only persistent instances (which travel between rooms), free non-persistent
-        // ones from the previous room. When the old room was also persistent, Runner_step
-        // already separated them; when it was NOT persistent, they're still here.
-        Instance** keptInstances = nullptr;
-        int32_t oldCount = (int32_t) arrlen(runner->instances);
-        repeat(oldCount, i) {
-            Instance* inst = runner->instances[i];
-            if (inst->persistent) {
-                arrput(keptInstances, inst);
-            } else {
-                hmdel(runner->instancesToId, inst->instanceId);
-                Instance_free(inst);
-            }
-        }
-        arrfree(runner->instances);
-        runner->instances = keptInstances;
+        Instance** carriedPersistent = takePersistentInstances(runner);
 
-        // Add back the saved room instances
+        // The native runner restores the room's own linked list first, then appends persistent arrivals at the tail.
+        // Event iteration is forward (oldest first), so a persistent instance runs after the room's own instances.
         int32_t savedCount = (int32_t) arrlen(savedState->instances);
         repeat(savedCount, i) {
             arrput(runner->instances, savedState->instances[i]);
         }
         arrfree(savedState->instances);
         savedState->instances = nullptr;
+
+        returnPersistentInstances(runner, carriedPersistent);
 
         // No Create events, no preCreateCode, no creationCode, no room creation code
         fprintf(stderr, "Runner: Room restored (persistent): %s (room %d) with %d instances\n", room->name, roomIndex, (int) arrlen(runner->instances));
@@ -909,20 +901,7 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
         dst->alpha = 1.0f;
     }
 
-    // Handle persistent instances: keep persistent ones, free non-persistent
-    Instance** keptInstances = nullptr;
-    int32_t oldCount = (int32_t) arrlen(runner->instances);
-    repeat(oldCount, i) {
-        Instance* inst = runner->instances[i];
-        if (inst->persistent) {
-            arrput(keptInstances, inst);
-        } else {
-            hmdel(runner->instancesToId, inst->instanceId);
-            Instance_free(inst);
-        }
-    }
-    arrfree(runner->instances);
-    runner->instances = keptInstances;
+    Instance** carriedPersistent = takePersistentInstances(runner);
 
     // Two-pass instance creation (matches HTML5 runner behavior):
     // Pass 1: Create all instance objects so they exist for cross-references
@@ -934,15 +913,8 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
     repeat(room->gameObjectCount, i) {
         RoomGameObject* roomObj = &room->gameObjects[i];
 
-        // Check if a persistent instance with this ID already exists
-        bool alreadyExists = false;
-        repeat(arrlen(runner->instances), j) {
-            if (runner->instances[j]->instanceId == roomObj->instanceID) {
-                alreadyExists = true;
-                break;
-            }
-        }
-        if (alreadyExists) continue;
+        // Skip if a persistent instance carried over from the previous room already owns this ID (re-entering the persistent instance's home room, don't create a duplicate!).
+        if (hmget(runner->instancesToId, roomObj->instanceID) != nullptr) continue;
         if (isObjectDisabled(runner, roomObj->objectDefinition)) continue;
 
         Instance* inst = createAndInitInstance(runner, roomObj->instanceID, roomObj->objectDefinition, (GMLReal) roomObj->x, (GMLReal) roomObj->y);
@@ -973,17 +945,11 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
     repeat(room->gameObjectCount, i) {
         RoomGameObject* roomObj = &room->gameObjects[i];
 
-        // Find the instance we created (skip persistent ones that were kept)
-        Instance* inst = nullptr;
-        repeat(arrlen(runner->instances), j) {
-            if (runner->instances[j]->instanceId == roomObj->instanceID) {
-                inst = runner->instances[j];
-                break;
-            }
-        }
+        Instance* inst = hmget(runner->instancesToId, roomObj->instanceID);
         if (inst == nullptr) continue;
 
-        // Skip instances that already had their Create event fired (persistent carry-overs)
+        // Skip instances that already had their Create event fired (persistent carry-overs
+        // that hmget also matches, since instancesToId still holds them).
         if (inst->createEventFired) continue;
         inst->createEventFired = true;
 
@@ -999,6 +965,9 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
         RValue result = VM_executeCode(runner->vmContext, room->creationCodeId);
         RValue_free(&result);
     }
+
+    // Append persistent instances carried over from the previous room at the tail, so forward event iteration processes the new room's own instances first and the travelers last.
+    returnPersistentInstances(runner, carriedPersistent);
 
     // Mark this room as initialized for persistent room support
     savedState->initialized = true;
@@ -1902,10 +1871,10 @@ void Runner_dumpState(Runner* runner) {
 
             if (val.type == RVALUE_ARRAY && val.array != nullptr) {
                 if (!hasSelfArrays) { printf("  Self Arrays:\n"); hasSelfArrays = true; }
-                repeat(val.array->length, ai) {
-                    RValue inner = val.array->data[ai];
-                    if (inner.type == RVALUE_UNDEFINED) continue;
-                    char* innerStr = RValue_toStringFancy(inner);
+                repeat(GMLArray_length1D(val.array), ai) {
+                    RValue* cell = GMLArray_slot(val.array, ai);
+                    if (cell == nullptr || cell->type == RVALUE_UNDEFINED) continue;
+                    char* innerStr = RValue_toStringFancy(*cell);
                     printf("    %s[%d] = %s\n", varName, (int) ai, innerStr);
                     free(innerStr);
                 }
@@ -1939,10 +1908,10 @@ void Runner_dumpState(Runner* runner) {
         if ((uint32_t) var->varID >= vm->globalVarCount) continue;
         RValue val = vm->globalVars[var->varID];
         if (val.type != RVALUE_ARRAY || val.array == nullptr) continue;
-        repeat(val.array->length, ai) {
-            RValue inner = val.array->data[ai];
-            if (inner.type == RVALUE_UNDEFINED) continue;
-            char* innerStr = RValue_toStringFancy(inner);
+        repeat(GMLArray_length1D(val.array), ai) {
+            RValue* cell = GMLArray_slot(val.array, ai);
+            if (cell == nullptr || cell->type == RVALUE_UNDEFINED) continue;
+            char* innerStr = RValue_toStringFancy(*cell);
             printf("  %s[%d] = %s\n", var->name, (int) ai, innerStr);
             free(innerStr);
         }
@@ -1979,8 +1948,9 @@ static void writeRValueJson(JsonWriter* w, RValue val) {
             // Render arrays as a JSON array. Skips RVALUE_UNDEFINED entries (they read as 0/null anyway).
             JsonWriter_beginArray(w);
             if (val.array != nullptr) {
-                repeat(val.array->length, ai) {
-                    writeRValueJson(w, val.array->data[ai]);
+                repeat(GMLArray_length1D(val.array), ai) {
+                    RValue* cell = GMLArray_slot(val.array, ai);
+                    writeRValueJson(w, cell != nullptr ? *cell : (RValue){ .type = RVALUE_UNDEFINED });
                 }
             }
             JsonWriter_endArray(w);
