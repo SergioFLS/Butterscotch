@@ -1108,6 +1108,9 @@ Runner* Runner_create(DataWin* dataWin, VMContext* vm, Renderer* renderer, FileS
     runner->osType = OS_WINDOWS;
     runner->keyboard = RunnerKeyboard_create();
     runner->mouse = RunnerMouse_create();
+    repeat(8, i) {
+        runner->viewSurfaceIds[i] = -1;
+    }
 
     Runner_reset(runner);
 

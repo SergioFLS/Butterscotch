@@ -168,6 +168,7 @@ int16_t VMBuiltins_resolveBuiltinVarId(const char* name) {
     if (strcmp(name, "view_object") == 0) return BUILTIN_VAR_VIEW_OBJECT;
     if (strcmp(name, "view_hspeed") == 0) return BUILTIN_VAR_VIEW_HSPEED;
     if (strcmp(name, "view_vspeed") == 0) return BUILTIN_VAR_VIEW_VSPEED;
+    if (strcmp(name, "view_surface_id") == 0) return BUILTIN_VAR_VIEW_SURFACE_ID;
 
     // Background properties
     if (strcmp(name, "background_visible") == 0) return BUILTIN_VAR_BACKGROUND_VISIBLE;
@@ -502,6 +503,10 @@ RValue VMBuiltins_getVariable(VMContext* ctx, int16_t builtinVarId, const char* 
         if (arrayIndex >= 0 && MAX_VIEWS > arrayIndex) return RValue_makeReal((GMLReal) runner->currentRoom->views[arrayIndex].speedY);
         return RValue_makeReal(0.0);
     }
+    if (builtinVarId == BUILTIN_VAR_VIEW_SURFACE_ID) {
+        if (arrayIndex >= 0 && MAX_VIEWS > arrayIndex) return RValue_makeReal((GMLReal) runner->viewSurfaceIds[arrayIndex]);
+        return RValue_makeReal(-1.0);
+    }
 
     // Background properties
     if (builtinVarId == BUILTIN_VAR_BACKGROUND_VISIBLE) {
@@ -745,6 +750,7 @@ void VMBuiltins_setVariable(VMContext* ctx, int16_t builtinVarId, const char* na
     if (builtinVarId == BUILTIN_VAR_VIEW_OBJECT) { if (arrayIndex >= 0 && MAX_VIEWS > arrayIndex) { runner->currentRoom->views[arrayIndex].objectId = RValue_toInt32(val); } return; }
     if (builtinVarId == BUILTIN_VAR_VIEW_HSPEED) { if (arrayIndex >= 0 && MAX_VIEWS > arrayIndex) { runner->currentRoom->views[arrayIndex].speedX = RValue_toInt32(val); } return; }
     if (builtinVarId == BUILTIN_VAR_VIEW_VSPEED) { if (arrayIndex >= 0 && MAX_VIEWS > arrayIndex) { runner->currentRoom->views[arrayIndex].speedY = RValue_toInt32(val); } return; }
+    if (builtinVarId == BUILTIN_VAR_VIEW_SURFACE_ID) { if (arrayIndex >= 0 && MAX_VIEWS > arrayIndex) { runner->viewSurfaceIds[arrayIndex] = RValue_toInt32(val); } return; }
 
     // Background properties
     if (builtinVarId == BUILTIN_VAR_BACKGROUND_VISIBLE) { if (arrayIndex >= 0 && MAX_BACKGROUNDS > arrayIndex) runner->backgrounds[arrayIndex].visible = RValue_toBool(val); return; }

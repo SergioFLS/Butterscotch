@@ -268,6 +268,7 @@ typedef struct Runner {
     SavedRoomState* savedRoomStates; // array of size dataWin->room.count, for persistent room support
     float viewAngles[8]; // runtime-only view_angle per view (not stored in data.win)
     int32_t viewCurrent; // index of the view currently being drawn (for view_current)
+    int32_t viewSurfaceIds[8]; // view_surface_id per view, -1 = default (render to screen), else surface index
     struct { char* key; int value; }* disabledObjects; // stb_ds string hashmap, nullptr = no filtering
     struct { int key; Instance* value; }* instancesToId;
     bool forceDrawDepth;
