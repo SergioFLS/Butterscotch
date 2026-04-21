@@ -504,23 +504,49 @@ static void cursorPositionCallback(GLFWwindow* window, double xpos, double ypos)
     int winWidth, winHeight;
     glfwGetWindowSize(window, &winWidth, &winHeight);
 
-    int32_t currentView = runner->viewCurrent;
-    RoomView* view = &runner->currentRoom->views[currentView];
+    if (winWidth <= 0 || winHeight <= 0 || runner->currentRoom == nullptr) return;
+    
+    // Map window pixel -> FBO pixel. The FBO is blit-stretched to fill the window.
+    int32_t gameW = runner->renderGameW > 0 ? runner->renderGameW : runner->currentRoom->width;
+    int32_t gameH = runner->renderGameH > 0 ? runner->renderGameH : runner->currentRoom->height;
+    double fboX = (xpos / winWidth) * gameW;
+    double fboY = (ypos / winHeight) * gameH;
 
-    int32_t width = runner->currentRoom->width;
-    int32_t height = runner->currentRoom->height;
-    int32_t offsetX = 0;
-    int32_t offsetY = 0;
-    if (view->enabled) {
-        // FIXME this statement breaks windowframe for some reason?
-        width = view->viewWidth;
-        height = view->viewHeight;
-        offsetX = view->viewX;
-        offsetY = view->viewY;
+    // Find the view whose port rect contains the cursor; fall back to the first enabled view, then to a default (0,0,roomW,roomH) mapping when no views are enabled.
+    // Native runner rule (GR_Window_Views_Convert): count enabled views that render directly to screen (view_surface_id == -1).
+    // If any exist, map via the one whose port contains the cursor (or fall through to the last one tried).
+    // If ALL enabled views have a surface bound, use room-space mapping scaled by the window, since the game is manually compositing those surfaces onto the window.
+    bool viewsEnabled = (runner->currentRoom->flags & 1) != 0;
+    int32_t screenViewCount = 0;
+    RoomView* pickedView = nullptr;
+    RoomView* lastScreenView = nullptr;
+    if (viewsEnabled) {
+        repeat(8, vi) {
+            RoomView* v = &runner->currentRoom->views[vi];
+            if (!v->enabled || runner->viewSurfaceIds[vi] != -1) continue;
+            screenViewCount++;
+            lastScreenView = v;
+            if (fboX >= v->portX && fboX < v->portX + v->portWidth && fboY >= v->portY && fboY < v->portY + v->portHeight) {
+                pickedView = v;
+                break;
+            }
+        }
+        if (pickedView == nullptr) pickedView = lastScreenView;
     }
 
-    runner->mouse->mouseX = offsetX + (xpos/winWidth) * width;
-    runner->mouse->mouseY = offsetY + (ypos/winHeight) * height;
+    if (pickedView != nullptr && pickedView->portWidth > 0 && pickedView->portHeight > 0) {
+        runner->mouse->mouseX = pickedView->viewX + (fboX - pickedView->portX) * ((double) pickedView->viewWidth / pickedView->portWidth);
+        runner->mouse->mouseY = pickedView->viewY + (fboY - pickedView->portY) * ((double) pickedView->viewHeight / pickedView->portHeight);
+    } else if (viewsEnabled && screenViewCount == 0) {
+        // No enabled view renders to screen (all redirect to surfaces). Mouse is in room space.
+        int32_t roomW = runner->currentRoom->width;
+        int32_t roomH = runner->currentRoom->height;
+        runner->mouse->mouseX = (xpos / winWidth) * roomW;
+        runner->mouse->mouseY = (ypos / winHeight) * roomH;
+    } else {
+        runner->mouse->mouseX = fboX;
+        runner->mouse->mouseY = fboY;
+    }
 }
 
 static void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
@@ -967,6 +993,9 @@ int main(int argc, char* argv[]) {
                 gameH = maxBottom;
             }
         }
+
+        runner->renderGameW = gameW;
+        runner->renderGameH = gameH;
 
         renderer->vtable->beginFrame(renderer, gameW, gameH, fbWidth, fbHeight);
 
