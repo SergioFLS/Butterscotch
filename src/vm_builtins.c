@@ -2544,6 +2544,15 @@ static RValue builtin_audioIsPaused(VMContext* ctx, RValue* args, MAYBE_UNUSED i
 }
 
 
+// audio_sound_length(sound) - returns the length of a sound in seconds.
+static RValue builtin_audioSoundLength(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeReal(0.0);
+    int32_t soundOrInstance = RValue_toInt32(args[0]);
+    float length = audio->vtable->getSoundLength(audio, soundOrInstance);
+    return RValue_makeReal((GMLReal) length);
+}
+
 static RValue builtin_audioSoundGain(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
     AudioSystem* audio = getAudioSystem(ctx);
     if (audio == nullptr) return RValue_makeUndefined();
@@ -6426,6 +6435,7 @@ void VMBuiltins_registerAll(VMContext* ctx) {
     VM_registerBuiltin(ctx, "audio_stop_all", builtin_audioStopAll);
     VM_registerBuiltin(ctx, "audio_is_playing", builtin_audioIsPlaying);
     VM_registerBuiltin(ctx, "audio_is_paused", builtin_audioIsPaused);
+    VM_registerBuiltin(ctx, "audio_sound_length", builtin_audioSoundLength);
     VM_registerBuiltin(ctx, "audio_sound_gain", builtin_audioSoundGain);
     VM_registerBuiltin(ctx, "audio_sound_pitch", builtin_audioSoundPitch);
     VM_registerBuiltin(ctx, "audio_sound_get_gain", builtin_audioSoundGetGain);

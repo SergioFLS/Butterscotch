@@ -107,11 +107,11 @@ static void parseSoundBank(Ps2AudioSystem* ps2) {
         // buf[10..11] reserved
     }
 
-    // Parse AUDO entries (16 bytes each)
+    // Parse AUDO entries (20 bytes each)
     ps2->audoEntries = safeMalloc(ps2->audoEntryCount * sizeof(Ps2AudoEntry));
     for (int i = 0; ps2->audoEntryCount > i; i++) {
-        uint8_t buf[16];
-        fread(buf, 16, 1, f);
+        uint8_t buf[20];
+        fread(buf, 20, 1, f);
         ps2->audoEntries[i].dataOffset    = *(uint32_t*) &buf[0];
         ps2->audoEntries[i].dataSize      = *(uint32_t*) &buf[4];
         ps2->audoEntries[i].sampleRate    = *(uint16_t*) &buf[8];
@@ -119,6 +119,7 @@ static void parseSoundBank(Ps2AudioSystem* ps2) {
         ps2->audoEntries[i].bitsPerSample = buf[11];
         ps2->audoEntries[i].format        = buf[12];
         // buf[13..15] reserved
+        ps2->audoEntries[i].sampleCount   = *(uint32_t*) &buf[16];
     }
 
     // Parse MUS string table + MUS entries
@@ -134,15 +135,16 @@ static void parseSoundBank(Ps2AudioSystem* ps2) {
         ps2->musEntries[i].name = name;
     }
 
-    // Second pass: read the MUS entries (12 bytes each)
+    // Second pass: read the MUS entries (16 bytes each)
     repeat(ps2->musEntryCount, i) {
-        uint8_t buf[12];
-        fread(buf, 12, 1, f);
+        uint8_t buf[16];
+        fread(buf, 16, 1, f);
         ps2->musEntries[i].dataOffset  = *(uint32_t*) &buf[0];
         ps2->musEntries[i].dataSize    = *(uint32_t*) &buf[4];
         ps2->musEntries[i].sampleRate  = *(uint16_t*) &buf[8];
         ps2->musEntries[i].channels    = buf[10];
         ps2->musEntries[i].format      = buf[11];
+        ps2->musEntries[i].sampleCount = *(uint32_t*) &buf[12];
     }
 
     if (ps2->musEntryCount > 0) {
@@ -1181,6 +1183,48 @@ static void ps2SetTrackPosition(AudioSystem* audio, int32_t soundOrInstance, flo
     }
 }
 
+// Total length of a sound in seconds. Looks up the AUDO or MUS entry's decoded sampleCount and divides by sampleRate.
+static float ps2GetSoundLength(AudioSystem* audio, int32_t soundOrInstance) {
+    Ps2AudioSystem* ps2 = (Ps2AudioSystem*) audio;
+
+    int32_t audoIndex = -1;
+    int32_t musIndex = -1;
+
+    if (soundOrInstance >= PS2_AUDIO_STREAM_INDEX_BASE) {
+        musIndex = soundOrInstance - PS2_AUDIO_STREAM_INDEX_BASE;
+    } else if (soundOrInstance >= PS2_SOUND_INSTANCE_ID_BASE) {
+        Ps2SoundInstance* sfx = findSfxInstanceById(ps2, soundOrInstance);
+        if (sfx != nullptr) {
+            audoIndex = sfx->audoIndex;
+        } else {
+            Ps2MusicStream* music = findMusicStreamById(ps2, soundOrInstance);
+            if (music != nullptr && music->soundIndex >= PS2_AUDIO_STREAM_INDEX_BASE) {
+                musIndex = music->soundIndex - PS2_AUDIO_STREAM_INDEX_BASE;
+            }
+        }
+    } else {
+        // SOND resource index — map to AUDO via the SOND entry
+        if (ps2->sondEntryCount > (uint32_t) soundOrInstance) {
+            uint16_t mapped = ps2->sondEntries[soundOrInstance].audoIndex;
+            if (mapped != 0xFFFF) audoIndex = mapped;
+        }
+    }
+
+    if (ps2->audoEntryCount > (uint32_t) audoIndex) {
+        if (audoIndex >= 0) {
+            Ps2AudoEntry* audo = &ps2->audoEntries[audoIndex];
+            if (audo->sampleRate == 0 || audo->sampleCount == 0) return 0.0f;
+            return (float) audo->sampleCount / (float) audo->sampleRate;
+        }
+        if (musIndex >= 0) {
+            Ps2MusEntry* mus = &ps2->musEntries[musIndex];
+            if (mus->sampleRate == 0 || mus->sampleCount == 0) return 0.0f;
+            return (float) mus->sampleCount / (float) mus->sampleRate;
+        }
+    }
+    return 0.0f;
+}
+
 static void ps2SetMasterGain(AudioSystem* audio, float gain) {
     // fprintf(stderr, "PS2AudioSystem: Setting master gain to %f\n", gain);
     Ps2AudioSystem* ps2 = (Ps2AudioSystem*) audio;
@@ -1249,6 +1293,7 @@ static AudioSystemVtable ps2AudioSystemVtable = {
     .getSoundPitch = ps2GetSoundPitch,
     .getTrackPosition = ps2GetTrackPosition,
     .setTrackPosition = ps2SetTrackPosition,
+    .getSoundLength = ps2GetSoundLength,
     .setMasterGain = ps2SetMasterGain,
     .setChannelCount = ps2SetChannelCount,
     .groupLoad = ps2GroupLoad,

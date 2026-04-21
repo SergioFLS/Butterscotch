@@ -39,6 +39,7 @@ typedef struct {
     uint8_t channels;
     uint8_t bitsPerSample;
     uint8_t format;      // 0=PCM, 1=IMA ADPCM
+    uint32_t sampleCount; // decoded samples per channel; length in seconds = sampleCount / sampleRate
 } Ps2AudoEntry;
 
 // ===[ SOUNDBNK.BIN MUS (Streamed Music) Structs ]===
@@ -52,6 +53,7 @@ typedef struct {
     uint16_t sampleRate;
     uint8_t channels;
     uint8_t format;          // 0=PCM, 1=IMA ADPCM
+    uint32_t sampleCount;    // decoded samples per channel; length in seconds = sampleCount / sampleRate
 } Ps2MusEntry;
 
 // ===[ LRU Decoded PCM Cache ]===
