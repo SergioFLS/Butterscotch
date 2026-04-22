@@ -2759,6 +2759,17 @@ VMContext* VM_create(DataWin* dataWin) {
         }
     }
 
+    // Build selfVarNameMap: varName -> varID for self/instance-scoped variables.
+    ctx->selfVarNameMap = nullptr;
+    forEach(Variable, v3, dataWin->vari.variables, dataWin->vari.variableCount) {
+        if (v3->varID >= 0 && (v3->instanceType == INSTANCE_SELF || 0 > v3->instanceType)) {
+            ptrdiff_t existing = shgeti(ctx->selfVarNameMap, (char*) v3->name);
+            if (0 > existing) {
+                shput(ctx->selfVarNameMap, (char*) v3->name, v3->varID);
+            }
+        }
+    }
+
     // Build funcName -> codeIndex hash map from SCPT chunk
     ctx->funcMap = nullptr;
     forEach(Script, s, dataWin->scpt.scripts, dataWin->scpt.count) {
@@ -3649,6 +3660,7 @@ void VM_free(VMContext* ctx) {
     // Free hash maps
     shfree(ctx->funcMap);
     shfree(ctx->globalVarNameMap);
+    shfree(ctx->selfVarNameMap);
     repeat(shlen(ctx->codeLocalsMap), i) {
         free(ctx->codeLocalsMap[i].key);
     }

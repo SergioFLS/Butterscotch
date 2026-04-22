@@ -1675,18 +1675,12 @@ static void variableInstanceSetOn(VMContext* ctx, Instance* target, const char* 
         return;
     }
     // Lookup varID by name from VARI (self scope)
-    int32_t varID = -1;
-    forEach(Variable, v, ctx->dataWin->vari.variables, ctx->dataWin->vari.variableCount) {
-        if (v->varID >= 0 && (v->instanceType == INSTANCE_SELF || 0 > v->instanceType) && strcmp(v->name, name) == 0) {
-            varID = v->varID;
-            break;
-        }
-    }
-    if (0 > varID) {
+    ptrdiff_t slot = shgeti(ctx->selfVarNameMap, (char*) name);
+    if (0 > slot) {
         fprintf(stderr, "variable_instance_set: variable '%s' not found in VARI table\n", name);
         return;
     }
-    Instance_setSelfVar(target, varID, val);
+    Instance_setSelfVar(target, ctx->selfVarNameMap[slot].value, val);
 }
 
 static RValue variableInstanceGetOn(VMContext* ctx, Instance* target, const char* name) {
@@ -1702,15 +1696,9 @@ static RValue variableInstanceGetOn(VMContext* ctx, Instance* target, const char
         }
         return val;
     }
-    int32_t varID = -1;
-    forEach(Variable, v, ctx->dataWin->vari.variables, ctx->dataWin->vari.variableCount) {
-        if (v->varID >= 0 && (v->instanceType == INSTANCE_SELF || 0 > v->instanceType) && strcmp(v->name, name) == 0) {
-            varID = v->varID;
-            break;
-        }
-    }
-    if (0 > varID) return RValue_makeUndefined();
-    RValue val = Instance_getSelfVar(target, varID);
+    ptrdiff_t slot = shgeti(ctx->selfVarNameMap, (char*) name);
+    if (0 > slot) return RValue_makeUndefined();
+    RValue val = Instance_getSelfVar(target, ctx->selfVarNameMap[slot].value);
     if (val.type == RVALUE_STRING && val.string != nullptr) {
         return RValue_makeOwnedString(safeStrdup(val.string));
     }
@@ -1769,15 +1757,9 @@ static RValue builtinVariableInstanceSet(VMContext* ctx, RValue* args, int32_t a
 
 static bool variableInstanceExistsOn(VMContext* ctx, Instance* target, const char* name) {
     if (VMBuiltins_resolveBuiltinVarId(name) != BUILTIN_VAR_UNKNOWN) return true;
-    int32_t varID = -1;
-    forEach(Variable, v, ctx->dataWin->vari.variables, ctx->dataWin->vari.variableCount) {
-        if (v->varID >= 0 && (v->instanceType == INSTANCE_SELF || 0 > v->instanceType) && strcmp(v->name, name) == 0) {
-            varID = v->varID;
-            break;
-        }
-    }
-    if (0 > varID) return false;
-    return hmgeti(target->selfVars, varID) >= 0;
+    ptrdiff_t slot = shgeti(ctx->selfVarNameMap, (char*) name);
+    if (0 > slot) return false;
+    return hmgeti(target->selfVars, ctx->selfVarNameMap[slot].value) >= 0;
 }
 
 static RValue builtinVariableInstanceExists(VMContext* ctx, RValue* args, int32_t argCount) {
