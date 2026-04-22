@@ -895,22 +895,6 @@ static uint32_t findOrAllocTpagSlot(DataWin* dw, uint32_t originalTpagCount) {
     return newIndex;
 }
 
-// Finds a free dynamic Sprite slot (textureCount == 0), or appends a new one.
-static uint32_t findOrAllocSpriteSlot(DataWin* dw, uint32_t originalSpriteCount) {
-    for (uint32_t i = originalSpriteCount; dw->sprt.count > i; i++) {
-        if (dw->sprt.sprites[i].textureCount == 0) return i;
-    }
-    uint32_t newIndex = dw->sprt.count;
-    dw->sprt.count++;
-    dw->sprt.sprites = safeRealloc(dw->sprt.sprites, dw->sprt.count * sizeof(Sprite));
-    memset(&dw->sprt.sprites[newIndex], 0, sizeof(Sprite));
-    // Match the native runner: set a "__newsprite<N>" name so asset_get_index can find it
-    char buf[32];
-    snprintf(buf, sizeof(buf), "__newsprite%u", newIndex);
-    dw->sprt.sprites[newIndex].name = strdup(buf);
-    return newIndex;
-}
-
 static int32_t glCreateSpriteFromSurface(Renderer* renderer, int32_t x, int32_t y, int32_t w, int32_t h, bool removeback, bool smooth, int32_t xorig, int32_t yorig) {
     GLLegacyRenderer* gl = (GLLegacyRenderer*) renderer;
     DataWin* dw = renderer->dataWin;
@@ -973,9 +957,9 @@ static int32_t glCreateSpriteFromSurface(Renderer* renderer, int32_t x, int32_t 
     uint32_t fakeOffset = DYNAMIC_TPAG_OFFSET_BASE + tpagIndex;
     hmput(dw->tpagOffsetMap, fakeOffset, (int32_t) tpagIndex);
 
-    uint32_t spriteIndex = findOrAllocSpriteSlot(dw, gl->originalSpriteCount);
+    uint32_t spriteIndex = DataWin_allocSpriteSlot(dw, gl->originalSpriteCount);
     Sprite* sprite = &dw->sprt.sprites[spriteIndex];
-    sprite->name = "dynamic_sprite";
+    // name was set by DataWin_allocSpriteSlot ("__newsprite<N>"); don't overwrite it here
     sprite->width = (uint32_t) w;
     sprite->height = (uint32_t) h;
     sprite->originX = xorig;
@@ -1025,9 +1009,11 @@ static void glDeleteSprite(Renderer* renderer, int32_t spriteIndex) {
         }
     }
 
-    // Clear the sprite entry so it won't be drawn and can be reused
+    // Clear the sprite entry so it won't be drawn and can be reused. Preserve `name` across the memset: the slot is still in sprt.count and must keep a valid string for asset_get_index / name lookups.
     free(sprite->textureOffsets);
+    const char* keepName = sprite->name;
     memset(sprite, 0, sizeof(Sprite));
+    sprite->name = keepName;
 
     fprintf(stderr, "GL: Deleted sprite %d\n", spriteIndex);
 }

@@ -836,6 +836,8 @@ void DataWin_loadRoomPayload(DataWin* dw, int32_t roomIndex);
 void DataWin_freeRoomPayload(Room* room);
 int32_t DataWin_resolveTPAG(DataWin* dw, uint32_t offset);
 int32_t DataWin_resolveSPRT(DataWin* dw, uint32_t offset);
+// Finds a reusable dynamic Sprite slot (textureCount == 0) at or above `startIndex`, or appends a new one.
+uint32_t DataWin_allocSpriteSlot(DataWin* dw, uint32_t startIndex);
 // Compares the detected effective GMS version (not the raw GEN8 version) against a lower bound.
 // Returns true if the detected version >= (major, minor, release, build).
 //

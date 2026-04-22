@@ -2302,6 +2302,31 @@ int32_t DataWin_resolveSPRT(DataWin* dw, uint32_t offset) {
     return dw->sprtOffsetMap[idx].value;
 }
 
+// ===[ Dynamic Sprite Slot Allocation ]===
+
+uint32_t DataWin_allocSpriteSlot(DataWin* dw, uint32_t startIndex) {
+    uint32_t newIndex;
+    for (uint32_t i = startIndex; dw->sprt.count > i; i++) {
+        if (dw->sprt.sprites[i].textureCount == 0) {
+            newIndex = i;
+            goto assignName;
+        }
+    }
+    newIndex = dw->sprt.count;
+    dw->sprt.count++;
+    dw->sprt.sprites = safeRealloc(dw->sprt.sprites, dw->sprt.count * sizeof(Sprite));
+    memset(&dw->sprt.sprites[newIndex], 0, sizeof(Sprite));
+assignName:
+    // Match the native runner: set a "__newsprite<N>" name so asset_get_index can find it.
+    // A reused slot preserves its name across glDeleteSprite's memset, so we only strdup when the slot is freshly appended (name is still NULL).
+    if (!dw->sprt.sprites[newIndex].name) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "__newsprite%u", newIndex);
+        dw->sprt.sprites[newIndex].name = strdup(buf);
+    }
+    return newIndex;
+}
+
 // ===[ Version Detection ]===
 
 bool DataWin_isVersionAtLeast(const DataWin* dw, uint32_t major, uint32_t minor, uint32_t release, uint32_t build) {
