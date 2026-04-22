@@ -904,6 +904,10 @@ static uint32_t findOrAllocSpriteSlot(DataWin* dw, uint32_t originalSpriteCount)
     dw->sprt.count++;
     dw->sprt.sprites = safeRealloc(dw->sprt.sprites, dw->sprt.count * sizeof(Sprite));
     memset(&dw->sprt.sprites[newIndex], 0, sizeof(Sprite));
+    // Match the native runner: set a "__newsprite<N>" name so asset_get_index can find it
+    char buf[32];
+    snprintf(buf, sizeof(buf), "__newsprite%u", newIndex);
+    dw->sprt.sprites[newIndex].name = strdup(buf);
     return newIndex;
 }
 

@@ -479,6 +479,7 @@ static void parseSPRT(BinaryReader* reader, DataWin* dw, bool skipLoadingPrecise
     uint32_t count;
     uint32_t* ptrs = readPointerTable(reader, &count);
     s->count = count;
+    s->parsedCount = count;
 
     if (count == 0) { free(ptrs); s->sprites = nullptr; return; }
 
@@ -2084,6 +2085,8 @@ void DataWin_free(DataWin* dw) {
                 }
                 free(dw->sprt.sprites[i].masks);
             }
+            // Runtime-allocated sprites (indices >= parsedCount) own their synthesized name
+            if (i >= dw->sprt.parsedCount) free((char*) dw->sprt.sprites[i].name);
         }
         free(dw->sprt.sprites);
         hmfree(dw->sprtOffsetMap);
