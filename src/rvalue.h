@@ -62,7 +62,7 @@ typedef struct RValue {
 #if IS_BC17_OR_HIGHER_ENABLED
     uint8_t gmlStackType; // GML data type from the instruction that pushed this value
 #endif
-} RValue;
+} __attribute__((aligned(8))) RValue;
 
 // Helper to initialize .gmlStackType only on BC17+ builds
 #if IS_BC17_OR_HIGHER_ENABLED
