@@ -1308,6 +1308,13 @@ static void gsDrawText(Renderer* renderer, const char* text, float x, float y, f
     float combinedScaleX = xscale * font->scaleX;
     float combinedScaleY = yscale * font->scaleY;
 
+    float gsScaleX = gs->scaleX;
+    float gsScaleY = gs->scaleY;
+    float gsOffsetX = gs->offsetX;
+    float gsOffsetY = gs->offsetY;
+    float gsViewX = (float) gs->viewX;
+    float gsViewY = (float) gs->viewY;
+
     int32_t textLen = (int32_t) strlen(text);
 
     // Vertical alignment
@@ -1365,10 +1372,10 @@ static void gsDrawText(Renderer* renderer, const char* text, float x, float y, f
                 float glyphW = (float) glyph->sourceWidth * combinedScaleX;
                 float glyphH = (float) glyph->sourceHeight * combinedScaleY;
 
-                float sx1 = (glyphX - (float) gs->viewX) * gs->scaleX + gs->offsetX;
-                float sy1 = (glyphY - (float) gs->viewY) * gs->scaleY + gs->offsetY;
-                float sx2 = (glyphX + glyphW - (float) gs->viewX) * gs->scaleX + gs->offsetX;
-                float sy2 = (glyphY + glyphH - (float) gs->viewY) * gs->scaleY + gs->offsetY;
+                float sx1 = (glyphX - gsViewX) * gsScaleX + gsOffsetX;
+                float sy1 = (glyphY - gsViewY) * gsScaleY + gsOffsetY;
+                float sx2 = (glyphX + glyphW - gsViewX) * gsScaleX + gsOffsetX;
+                float sy2 = (glyphY + glyphH - gsViewY) * gsScaleY + gsOffsetY;
 
                 gsKit_prim_sprite_texture(gs->gsGlobal, &glyphTex, sx1, sy1, u0, v0, sx2, sy2, u1, v1, gs->zCounter, textColor);
             }
@@ -1410,6 +1417,13 @@ static void gsDrawTextColor(Renderer* renderer, const char* text, float x, float
 
     float combinedScaleX = xscale * font->scaleX;
     float combinedScaleY = yscale * font->scaleY;
+
+    float gsScaleX = gs->scaleX;
+    float gsScaleY = gs->scaleY;
+    float gsOffsetX = gs->offsetX;
+    float gsOffsetY = gs->offsetY;
+    float gsViewX = (float) gs->viewX;
+    float gsViewY = (float) gs->viewY;
 
     // Vertical alignment
     int32_t lineCount = TextUtils_countLines(text, textLen);
@@ -1519,10 +1533,10 @@ static void gsDrawTextColor(Renderer* renderer, const char* text, float x, float
                 float glyphW = (float) glyph->sourceWidth * combinedScaleX;
                 float glyphH = (float) glyph->sourceHeight * combinedScaleY;
 
-                float sx1 = (glyphX - (float) gs->viewX) * gs->scaleX + gs->offsetX;
-                float sy1 = (glyphY - (float) gs->viewY) * gs->scaleY + gs->offsetY;
-                float sx2 = (glyphX + glyphW - (float) gs->viewX) * gs->scaleX + gs->offsetX;
-                float sy2 = (glyphY + glyphH - (float) gs->viewY) * gs->scaleY + gs->offsetY;
+                float sx1 = (glyphX - gsViewX) * gsScaleX + gsOffsetX;
+                float sy1 = (glyphY - gsViewY) * gsScaleY + gsOffsetY;
+                float sx2 = (glyphX + glyphW - gsViewX) * gsScaleX + gsOffsetX;
+                float sy2 = (glyphY + glyphH - gsViewY) * gsScaleY + gsOffsetY;
 
                 gsKit_prim_triangle_goraud_texture_3d(gs->gsGlobal, &glyphTex,
                         sx1, sy1, gs->zCounter, u0, v0,
