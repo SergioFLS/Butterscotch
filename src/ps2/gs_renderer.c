@@ -1310,6 +1310,10 @@ static void gsDrawText(Renderer* renderer, const char* text, float x, float y, f
     // Scale vertex RGB from 0-255 to 0-128 so white (255) becomes 1.0x multiplier
     uint32_t color = renderer->drawColor;
     uint8_t a = alphaToGS(renderer->drawAlpha);
+    uint8_t r = BGR_R(color) >> 1;
+    uint8_t g = BGR_G(color) >> 1;
+    uint8_t b = BGR_B(color) >> 1;
+    u64 textColor = GS_SETREG_RGBAQ(r, g, b, a, 0x00);
 
     int32_t textLen = (int32_t) strlen(text);
 
@@ -1373,10 +1377,6 @@ static void gsDrawText(Renderer* renderer, const char* text, float x, float y, f
                 float sx2 = (glyphX + glyphW - (float) gs->viewX) * gs->scaleX + gs->offsetX;
                 float sy2 = (glyphY + glyphH - (float) gs->viewY) * gs->scaleY + gs->offsetY;
 
-                uint8_t r = BGR_R(color) >> 1;
-                uint8_t g = BGR_G(color) >> 1;
-                uint8_t b = BGR_B(color) >> 1;
-                u64 textColor = GS_SETREG_RGBAQ(r, g, b, a, 0x00);
                 gsKit_prim_sprite_texture(gs->gsGlobal, &glyphTex, sx1, sy1, u0, v0, sx2, sy2, u1, v1, gs->zCounter, textColor);
             }
 
@@ -1456,6 +1456,29 @@ static void gsDrawTextColor(Renderer* renderer, const char* text, float x, float
             c3 |= ((c4 & 0xff00) + (right_delta_g >> 8) & 0xff00) & 0xff00;
             c3 |= ((c4 & 0xff) + (right_delta_b >> 16)) & 0xff;
 
+        // GS modulate mode: Output = Texture * Vertex / 128
+        // Scale vertex RGB from 0-255 to 0-128 so white (255) becomes 1.0x multiplier
+        uint8_t ga = alphaToGS(alpha);
+        uint8_t r1 = BGR_R(c1) >> 1;
+        uint8_t g1 = BGR_G(c1) >> 1;
+        uint8_t b1 = BGR_B(c1) >> 1;
+        u64 textColor1 = GS_SETREG_RGBAQ(r1, g1, b1, ga, 0x00);
+
+        uint8_t r2 = BGR_R(c2) >> 1;
+        uint8_t g2 = BGR_G(c2) >> 1;
+        uint8_t b2 = BGR_B(c2) >> 1;
+        u64 textColor2 = GS_SETREG_RGBAQ(r2, g2, b2, ga, 0x00);
+
+        uint8_t r3 = BGR_R(c3) >> 1;
+        uint8_t g3 = BGR_G(c3) >> 1;
+        uint8_t b3 = BGR_B(c3) >> 1;
+        u64 textColor3 = GS_SETREG_RGBAQ(r3, g3, b3, ga, 0x00);
+
+        uint8_t r4 = BGR_R(c4) >> 1;
+        uint8_t g4 = BGR_G(c4) >> 1;
+        uint8_t b4 = BGR_B(c4) >> 1;
+        u64 textColor4 = GS_SETREG_RGBAQ(r4, g4, b4, ga, 0x00);
+
         left_delta_r += left_r_dx;
         left_delta_g += left_g_dx;
         left_delta_b += left_b_dx;
@@ -1506,29 +1529,6 @@ static void gsDrawTextColor(Renderer* renderer, const char* text, float x, float
                 float sy1 = (glyphY - (float) gs->viewY) * gs->scaleY + gs->offsetY;
                 float sx2 = (glyphX + glyphW - (float) gs->viewX) * gs->scaleX + gs->offsetX;
                 float sy2 = (glyphY + glyphH - (float) gs->viewY) * gs->scaleY + gs->offsetY;
-
-                // GS modulate mode: Output = Texture * Vertex / 128
-                // Scale vertex RGB from 0-255 to 0-128 so white (255) becomes 1.0x multiplier
-                uint8_t ga = alphaToGS(alpha);
-                uint8_t r1 = BGR_R(c1) >> 1;
-                uint8_t g1 = BGR_G(c1) >> 1;
-                uint8_t b1 = BGR_B(c1) >> 1;
-                u64 textColor1 = GS_SETREG_RGBAQ(r1, g1, b1, ga, 0x00);
-
-                uint8_t r2 = BGR_R(c2) >> 1;
-                uint8_t g2 = BGR_G(c2) >> 1;
-                uint8_t b2 = BGR_B(c2) >> 1;
-                u64 textColor2 = GS_SETREG_RGBAQ(r2, g2, b2, ga, 0x00);
-
-                uint8_t r3 = BGR_R(c3) >> 1;
-                uint8_t g3 = BGR_G(c3) >> 1;
-                uint8_t b3 = BGR_B(c3) >> 1;
-                u64 textColor3 = GS_SETREG_RGBAQ(r3, g3, b3, ga, 0x00);
-
-                uint8_t r4 = BGR_R(c4) >> 1;
-                uint8_t g4 = BGR_G(c4) >> 1;
-                uint8_t b4 = BGR_B(c4) >> 1;
-                u64 textColor4 = GS_SETREG_RGBAQ(r4, g4, b4, ga, 0x00);
 
                 gsKit_prim_triangle_goraud_texture_3d(gs->gsGlobal, &glyphTex,
                         sx1, sy1, gs->zCounter, u0, v0,
