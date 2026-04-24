@@ -605,6 +605,21 @@ int main(int argc, char* argv[]) {
     free(dataWinPath);
     shfree(eagerRooms);
 
+    bool bytecodeVersionSupported = false;
+#ifdef ENABLE_BC16
+    if (dataWin->gen8.bytecodeVersion == 15 || dataWin->gen8.bytecodeVersion == 16) bytecodeVersionSupported = true;
+#endif
+#ifdef ENABLE_BC17
+    if (dataWin->gen8.bytecodeVersion == 17) bytecodeVersionSupported = true;
+#endif
+
+    if (!bytecodeVersionSupported) {
+        char errorText[128];
+        snprintf(errorText, sizeof(errorText), "Unsupported bytecode version %u!", dataWin->gen8.bytecodeVersion);
+        drawStatusScreen(gsGlobal, gsFontM, dataWin->gen8.displayName, errorText, &loadingState);
+        while (true) {}
+    }
+
     {
         void* heapTop = sbrk(0);
         int32_t usedBytes = (int32_t) (uintptr_t) heapTop;
