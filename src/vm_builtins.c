@@ -606,7 +606,7 @@ RValue VMBuiltins_getVariable(VMContext* ctx, int16_t builtinVarId, const char* 
             return RValue_makeReal(0.0);
         case BUILTIN_VAR_VIEW_OBJECT:
             if (arrayIndex >= 0 && MAX_VIEWS > arrayIndex) return RValue_makeReal((GMLReal) runner->views[arrayIndex].objectId);
-            return RValue_makeReal(-4.0);
+            return RValue_makeReal(INSTANCE_NOONE);
         case BUILTIN_VAR_VIEW_HSPEED:
             if (arrayIndex >= 0 && MAX_VIEWS > arrayIndex) return RValue_makeReal((GMLReal) runner->views[arrayIndex].speedX);
             return RValue_makeReal(0.0);
@@ -3618,7 +3618,7 @@ static RValue builtinInstanceNumber(VMContext* ctx, RValue* args, int32_t argCou
 }
 
 static RValue builtinInstanceFind(VMContext* ctx, RValue* args, int32_t argCount) {
-    if (2 > argCount) return RValue_makeReal(-4.0); // noone
+    if (2 > argCount) return RValue_makeReal(INSTANCE_NOONE);
     Runner* runner = (Runner*) ctx->runner;
     int32_t objectIndex = RValue_toInt32(args[0]);
     int32_t n = RValue_toInt32(args[1]);
@@ -3631,7 +3631,7 @@ static RValue builtinInstanceFind(VMContext* ctx, RValue* args, int32_t argCount
             count++;
         }
     }
-    return RValue_makeReal(-4.0); // noone
+    return RValue_makeReal(INSTANCE_NOONE);
 }
 
 static RValue builtinInstanceExists(VMContext* ctx, RValue* args, int32_t argCount) {
@@ -3696,7 +3696,7 @@ static RValue builtinInstanceCreate(VMContext* ctx, RValue* args, int32_t argCou
     }
     Instance* callerInst = (Instance*) ctx->currentInstance;
     Instance* inst = Runner_createInstance(runner, x, y, objectIndex);
-    if (inst == nullptr) return RValue_makeReal(-4.0); // noone
+    if (inst == nullptr) return RValue_makeReal(INSTANCE_NOONE);
     if (callerInst != nullptr && ctx->creatorVarID >= 0) {
         Instance_setSelfVar(inst, ctx->creatorVarID, RValue_makeReal((GMLReal) callerInst->instanceId));
     }
@@ -3708,11 +3708,11 @@ static RValue builtinInstanceCopy(VMContext* ctx, RValue* args, int32_t argCount
     Instance* source = (Instance*) ctx->currentInstance;
     if (source == nullptr) {
         fprintf(stderr, "VM: instance_copy: no current instance\n");
-        return RValue_makeReal(-4.0); // noone
+        return RValue_makeReal(INSTANCE_NOONE);
     }
     bool performEvent = argCount > 0 ? RValue_toBool(args[0]) : false;
     Instance* inst = Runner_copyInstance(runner, source, performEvent);
-    if (inst == nullptr) return RValue_makeReal(-4.0);
+    if (inst == nullptr) return RValue_makeReal(INSTANCE_NOONE);
     return RValue_makeReal((GMLReal) inst->instanceId);
 }
 
@@ -3729,7 +3729,7 @@ static RValue builtinInstanceCreateDepth(VMContext* ctx, RValue* args, int32_t a
     }
     Instance* callerInst = (Instance*) ctx->currentInstance;
     Instance* inst = Runner_createInstanceWithDepth(runner, x, y, objectIndex, depth);
-    if (inst == nullptr) return RValue_makeReal(-4.0); // noone
+    if (inst == nullptr) return RValue_makeReal(INSTANCE_NOONE);
     if (callerInst != nullptr && ctx->creatorVarID >= 0) {
         Instance_setSelfVar(inst, ctx->creatorVarID, RValue_makeReal((GMLReal) callerInst->instanceId));
     }
