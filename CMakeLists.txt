@@ -126,6 +126,12 @@ elseif(PLATFORM STREQUAL "ps2")
     # Platform identifier for PS2-specific code paths (e.g., scratchpad allocation)
     add_compile_definitions(PLATFORM_PS2)
     
+    # PS2 renderer hot path logs
+    option(ENABLE_PS2_RENDERER_LOGS "Enable hot path logs in the PS2 renderer" OFF)
+    if(ENABLE_PS2_RENDERER_LOGS)
+        add_compile_definitions(ENABLE_PS2_RENDERER_LOGS)
+    endif()
+
     # PS2 audio system
     option(ENABLE_PS2_AUDIO "Enable the PS2 audio system" ON)
     if(ENABLE_PS2_AUDIO)

@@ -19,8 +19,10 @@ typedef struct Instance {
     float x, y;
     float xprevious, yprevious;
     float xstart, ystart;
-    bool persistent, solid, active, destroyed, visible, createEventFired, outsideRoom;
+    bool persistent, solid, active, destroyed, visible, createEventFired, outsideRoom, spatialGridDirty;
     int32_t maskIndex; // collision mask sprite override (-1 = use spriteIndex)
+    int32_t* collisionCells; // Used to track where we are
+    uint32_t lastCollisionQueryId;
 
     // Per-instance self variable storage (sparse stb_ds hashmap, keyed by varID).
     SelfVarEntry* selfVars;

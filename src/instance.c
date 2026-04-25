@@ -24,6 +24,7 @@ Instance* Instance_create(uint32_t instanceId, int32_t objectIndex, GMLReal x, G
     inst->visible = true;
     inst->destroyed = false;
     inst->outsideRoom = false;
+    inst->spatialGridDirty = false;
     inst->spriteIndex = -1;
     inst->imageSpeed = 1.0f;
     inst->imageIndex = 0.0f;
@@ -60,6 +61,7 @@ void Instance_free(Instance* instance) {
         RValue_free(&instance->selfVars[i].value);
     }
     hmfree(instance->selfVars);
+    arrfree(instance->collisionCells);
 
     free(instance);
 }

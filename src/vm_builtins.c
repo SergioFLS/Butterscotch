@@ -807,18 +807,22 @@ void VMBuiltins_setVariable(VMContext* ctx, int16_t builtinVarId, const char* na
         case BUILTIN_VAR_IMAGE_INDEX:
             if (inst == nullptr) break;
             inst->imageIndex = (float) RValue_toReal(val);
+            SpatialGrid_markInstanceAsDirty(runner->spatialGrid, inst);
             return;
         case BUILTIN_VAR_IMAGE_XSCALE:
             if (inst == nullptr) break;
             inst->imageXscale = (float) RValue_toReal(val);
+            SpatialGrid_markInstanceAsDirty(runner->spatialGrid, inst);
             return;
         case BUILTIN_VAR_IMAGE_YSCALE:
             if (inst == nullptr) break;
             inst->imageYscale = (float) RValue_toReal(val);
+            SpatialGrid_markInstanceAsDirty(runner->spatialGrid, inst);
             return;
         case BUILTIN_VAR_IMAGE_ANGLE:
             if (inst == nullptr) break;
             inst->imageAngle = (float) RValue_toReal(val);
+            SpatialGrid_markInstanceAsDirty(runner->spatialGrid, inst);
             return;
         case BUILTIN_VAR_IMAGE_ALPHA:
             if (inst == nullptr) break;
@@ -831,6 +835,7 @@ void VMBuiltins_setVariable(VMContext* ctx, int16_t builtinVarId, const char* na
         case BUILTIN_VAR_SPRITE_INDEX:
             if (inst == nullptr) break;
             inst->spriteIndex = RValue_toInt32(val);
+            SpatialGrid_markInstanceAsDirty(runner->spatialGrid, inst);
             return;
         case BUILTIN_VAR_VISIBLE:
             if (inst == nullptr) break;
@@ -843,10 +848,12 @@ void VMBuiltins_setVariable(VMContext* ctx, int16_t builtinVarId, const char* na
         case BUILTIN_VAR_X:
             if (inst == nullptr) break;
             inst->x = (float) RValue_toReal(val);
+            SpatialGrid_markInstanceAsDirty(runner->spatialGrid, inst);
             return;
         case BUILTIN_VAR_Y:
             if (inst == nullptr) break;
             inst->y = (float) RValue_toReal(val);
+            SpatialGrid_markInstanceAsDirty(runner->spatialGrid, inst);
             return;
         case BUILTIN_VAR_PERSISTENT:
             if (inst == nullptr) break;
@@ -875,6 +882,7 @@ void VMBuiltins_setVariable(VMContext* ctx, int16_t builtinVarId, const char* na
         case BUILTIN_VAR_MASK_INDEX:
             if (inst == nullptr) break;
             inst->maskIndex = RValue_toInt32(val);
+            SpatialGrid_markInstanceAsDirty(runner->spatialGrid, inst);
             return;
         case BUILTIN_VAR_SPEED:
             if (inst == nullptr) break;
@@ -1628,8 +1636,14 @@ static RValue builtinMoveSnap(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t
     GMLReal hsnap = RValue_toReal(args[0]);
     GMLReal vsnap = RValue_toReal(args[1]);
     Instance* inst = ctx->currentInstance;
-    if (hsnap > 0.0) inst->x = (float) (GMLReal_floor((inst->x / hsnap) + 0.5) * hsnap);
-    if (vsnap > 0.0) inst->y = (float) (GMLReal_floor((inst->y / vsnap) + 0.5) * vsnap);
+    if (hsnap > 0.0) {
+        inst->x = (float) (GMLReal_floor((inst->x / hsnap) + 0.5) * hsnap);
+        SpatialGrid_markInstanceAsDirty(ctx->runner->spatialGrid, inst);
+    }
+    if (vsnap > 0.0) {
+        inst->y = (float) (GMLReal_floor((inst->y / vsnap) + 0.5) * vsnap);
+        SpatialGrid_markInstanceAsDirty(ctx->runner->spatialGrid, inst);
+    }
     return RValue_makeReal(0.0);
 }
 
@@ -2698,6 +2712,7 @@ static RValue builtinMpLinearStepCommon(VMContext* ctx, GMLReal goalX, GMLReal g
     inst->direction = (float) (GMLReal_atan2(-(newY - inst->y), newX - inst->x) * (180.0 / M_PI));
     inst->x = (float) newX;
     inst->y = (float) newY;
+    SpatialGrid_markInstanceAsDirty(ctx->runner->spatialGrid, inst);
     return RValue_makeBool(reached);
 }
 
@@ -2756,6 +2771,7 @@ static bool mpTryDir(GMLReal dir, Runner* runner, Instance* inst, GMLReal speed,
     inst->direction = (float) dir;
     inst->x = (float) nextX;
     inst->y = (float) nextY;
+    SpatialGrid_markInstanceAsDirty(runner->spatialGrid, inst);
     return true;
 }
 
@@ -2777,6 +2793,7 @@ static RValue builtinMpPotentialStepCommon(VMContext* ctx, GMLReal goalX, GMLRea
             inst->direction = (float) dir;
             inst->x = (float) goalX;
             inst->y = (float) goalY;
+            SpatialGrid_markInstanceAsDirty(ctx->runner->spatialGrid, inst);
         }
         return RValue_makeBool(true);
     }
@@ -4019,6 +4036,7 @@ static RValue builtinActionMoveTo(VMContext* ctx, MAYBE_UNUSED RValue* args, MAY
             inst->x = (float) ax;
             inst->y = (float) ay;
         }
+        SpatialGrid_markInstanceAsDirty(ctx->runner->spatialGrid, inst);
     }
     return RValue_makeUndefined();
 }
@@ -4031,9 +4049,11 @@ static RValue builtinActionSnap(VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE
         Instance* inst = (Instance*) ctx->currentInstance;
         if (hsnap > 0.0) {
             inst->x = (float) ((int32_t) GMLReal_round(inst->x / hsnap) * hsnap);
+            SpatialGrid_markInstanceAsDirty(ctx->runner->spatialGrid, inst);
         }
         if (vsnap > 0.0) {
             inst->y = (float) ((int32_t) GMLReal_round(inst->y / vsnap) * vsnap);
+            SpatialGrid_markInstanceAsDirty(ctx->runner->spatialGrid, inst);
         }
     }
     return RValue_makeUndefined();
@@ -5709,22 +5729,37 @@ static RValue builtinInstancePlace(VMContext* ctx, RValue* args, int32_t argCoun
     InstanceBBox callerBBox = Collision_computeBBox(runner->dataWin, caller);
     int32_t resultId = INSTANCE_NOONE;
 
+    SpatialGrid_syncGrid(runner, runner->spatialGrid);
+
     if (callerBBox.valid) {
-        int32_t snapBase = Runner_pushInstancesForTarget(runner, targetObjIndex);
-        int32_t snapEnd  = (int32_t) arrlen(runner->instanceSnapshots);
-        for (int32_t i = snapBase; snapEnd > i; i++) {
-            Instance* other = runner->instanceSnapshots[i];
-            if (!other->active || other == caller) continue;
+        SpatialGridRange callerRange = SpatialGrid_computeCellRange(runner->spatialGrid, callerBBox.left, callerBBox.top, callerBBox.right, callerBBox.bottom);
+        bool filterByObject = targetObjIndex >= 0 && 100000 > targetObjIndex;
+        bool filterByInstanceId = targetObjIndex >= 100000;
+        uint32_t queryId = ++runner->collisionQueryCounter;
 
-            InstanceBBox otherBBox = Collision_computeBBox(runner->dataWin, other);
-            if (!otherBBox.valid) continue;
+        for (int32_t gx = callerRange.minGridX; callerRange.maxGridX >= gx && resultId == INSTANCE_NOONE; gx++) {
+            for (int32_t gy = callerRange.minGridY; callerRange.maxGridY >= gy && resultId == INSTANCE_NOONE; gy++) {
+                Instance** cell = runner->spatialGrid->grid[SpatialGrid_cellIndex(runner->spatialGrid, gx, gy)];
+                int32_t cellLen = (int32_t) arrlen(cell);
+                for (int32_t ci = 0; cellLen > ci; ci++) {
+                    Instance* other = cell[ci];
+                    if (!other->active || other == caller) continue;
+                    if (other->lastCollisionQueryId == queryId) continue;
+                    other->lastCollisionQueryId = queryId;
 
-            if (Collision_instancesOverlapPrecise(runner->dataWin, caller, other, callerBBox, otherBBox)) {
-                resultId = other->instanceId;
-                break;
+                    if (filterByObject && !VM_isObjectOrDescendant(runner->dataWin, other->objectIndex, targetObjIndex)) continue;
+                    if (filterByInstanceId && other->instanceId != (uint32_t) targetObjIndex) continue;
+
+                    InstanceBBox otherBBox = Collision_computeBBox(runner->dataWin, other);
+                    if (!otherBBox.valid) continue;
+
+                    if (Collision_instancesOverlapPrecise(runner->dataWin, caller, other, callerBBox, otherBBox)) {
+                        resultId = other->instanceId;
+                        break;
+                    }
+                }
             }
         }
-        Runner_popInstanceSnapshot(runner, snapBase);
     }
 
     caller->x = savedX;
@@ -6957,6 +6992,7 @@ static RValue builtinPathStart(VMContext* ctx, RValue* args, int32_t argCount) {
         PathPositionResult startPos = GamePath_getPosition(path, inst->pathSpeed >= 0.0f ? 0.0f : 1.0f);
         inst->x = (float) startPos.x;
         inst->y = (float) startPos.y;
+        SpatialGrid_markInstanceAsDirty(ctx->runner->spatialGrid, inst);
 
         PathPositionResult origin = GamePath_getPosition(path, 0.0f);
         inst->pathXStart = (float) origin.x;

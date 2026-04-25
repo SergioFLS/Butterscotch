@@ -97,6 +97,7 @@ void Runner_addInstanceToObjectLists(Runner* runner, Instance* inst) {
         currentObj = dataWin->objt.objects[currentObj].parentId;
         depth++;
     }
+    SpatialGrid_markInstanceAsDirty(runner->spatialGrid, inst);
 }
 
 void Runner_removeInstanceFromObjectLists(Runner* runner, Instance* inst) {
@@ -117,6 +118,7 @@ void Runner_removeInstanceFromObjectLists(Runner* runner, Instance* inst) {
         currentObj = dataWin->objt.objects[currentObj].parentId;
         depth++;
     }
+    SpatialGrid_markInstanceAsDirty(runner->spatialGrid, inst);
 }
 
 void Runner_clearAllObjectLists(Runner* runner) {
@@ -949,6 +951,10 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
 
     runner->currentRoom = room;
     runner->currentRoomIndex = roomIndex;
+    // It could be the first time we are initializing the grid
+    if (runner->spatialGrid != nullptr)
+        SpatialGrid_free(runner->spatialGrid);
+    runner->spatialGrid = SpatialGrid_create(room->width, room->height);
 
     // Find position in room order
     runner->currentRoomOrderPosition = -1;
@@ -1257,6 +1263,9 @@ static void cleanupState(Runner* runner) {
             *file = (OpenTextFile) {0};
         }
     }
+
+    if (runner->spatialGrid != nullptr)
+        SpatialGrid_free(runner->spatialGrid);
 }
 
 // ===[ Public API ]===
@@ -1564,7 +1573,12 @@ static void dispatchCollisionEvents(Runner* runner) {
                         self->y = self->yprevious;
                         other->x = other->xprevious;
                         other->y = other->yprevious;
+                        SpatialGrid_markInstanceAsDirty(runner->spatialGrid, self);
+                        SpatialGrid_markInstanceAsDirty(runner->spatialGrid, other);
                     }
+
+                    // We don't need to call "SpatialGrid_markInstanceAsDirty" here because *technically* just because a collision happened, doesn't mean that the instances have moved
+                    // And if it DOES move via GML, the variable write handlers will set it to dirty
 
                     executeCollisionEvent(runner, self, other, targetObjIndex);
                     // The collision event may have moved our instance, so we'll need to regenerate our self attributes!
@@ -1778,6 +1792,8 @@ static bool adaptPath(Runner* runner, Instance* inst) {
     inst->x = (float) newx;
     inst->y = (float) newy;
 
+    SpatialGrid_markInstanceAsDirty(runner->spatialGrid, inst);
+
     return atPathEnd;
 }
 
@@ -1972,6 +1988,7 @@ void Runner_step(Runner* runner) {
         if (inst->hspeed != 0.0f || inst->vspeed != 0.0f) {
             inst->x += inst->hspeed;
             inst->y += inst->vspeed;
+            SpatialGrid_markInstanceAsDirty(runner->spatialGrid, inst);
         }
     }
 
